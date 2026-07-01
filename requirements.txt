@@ -1,0 +1,2 @@
+networkx>=3.0
+cvxpy>=1.4
