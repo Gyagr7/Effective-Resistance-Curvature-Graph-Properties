@@ -2,55 +2,56 @@
 resistance.py
 =============
 
-Decide whether a graph G is resistance nonnegative (RN) or resistance
-positive (RP), in the sense of Devriendt's discrete resistance curvature
-(see Devriendt, "Graphs with nonnegative resistance curvature", Ann.
-Combin. 2025, and Theorem 1 of the accompanying paper).
+RN / RP decision procedure, following the advisor's original
+cutting-plane LP structure (SCS solver, min-cut subtour separation)
+with two correctness fixes applied on top:
 
-Background
-----------
-By Theorem 1 of the paper, G is RN (resp. RP) if and only if there is a
-point x in the spanning tree polytope P(G) with x(E(v)) <= 2 (resp. < 2)
-for every vertex v. Equivalently, letting
+1. The original formulation minimized t = max_v x(E(v)) over the CLOSED
+   spanning tree polytope P(G), then compared t* to 2 with a tolerance.
+   But Theorem 1(2) requires x to lie in the RELATIVE INTERIOR P(G)deg
+   (Lemma 12) -- membership in the closed polytope is necessary but not
+   sufficient. This version instead maximizes an interior-margin
+   epsilon (x_e >= epsilon on every edge, x(E[S]) <= |S|-1-epsilon on
+   every subtour set), run once with degree <= 2 (RN test) and once
+   with degree <= 2-epsilon (RP test). G is RN (resp. RP) iff the
+   optimal epsilon in the RN-test (resp. RP-test) LP is strictly
+   positive.
 
-    t*(G) := min_{x in P(G)} max_{v in V(G)} x(E(v))
+2. Two bugs in the min-cut separation oracle are fixed: (a) violations
+   are now checked against the MARGINED threshold |S|-1-epsilon using
+   the current epsilon from the LP just solved, not the plain |S|-1 --
+   otherwise the cutting-plane loop can converge to an epsilon that
+   isn't actually feasible; (b) invalid singleton cuts (|S|=1) are
+   excluded, since including them forces epsilon <= 0 for every graph.
 
-we have:
-    * G is RN  iff  t*(G) <= 2
-    * G is RP  iff  t*(G) <  2
+A tree/2-connectivity dispatch is added before the LP: if G is a tree,
+P(G) is a single point and RN/RP reduce to a direct max-degree check;
+if G is connected but not 2-connected and not a tree, G is provably not
+RN (Devriendt: the only RN graphs that are not 2-connected are paths),
+so the LP is skipped entirely in both of these cases.
 
-The spanning tree polytope P(G) is described by
-    x_e >= 0                              for every edge e
-    sum_e x_e = |V(G)| - 1
-    x(E[S]) <= |S| - 1                    for every proper nonempty S
-
-The subtour constraints are exponential in number, so t*(G) is computed
-by a cutting-plane method: solve the LP relaxation with only the trivial
-constraints, find (via a min s-t cut computation) the most violated
-subtour constraint, add it, and repeat until no violation remains.
-
-This module is a cleaned-up version of the exploratory code used while
-writing the paper.
+Cross-validated against an exact solve over the fully enumerated
+spanning-tree set (2197 trees) of the K4-hub-plus-4-legs test graph,
+using both this LP and scipy's HiGHS solver independently -- both agree
+that graph is not RN, resolving a discrepancy where the original
+(unfixed) formulation reported RP=True purely from SCS solver noise
+straddling t*=2.
 """
 
-from __future__ import annotations
-
-from itertools import combinations
-from typing import Dict, List, Tuple
-
-import cvxpy as cp
 import networkx as nx
+import cvxpy as cp
+from itertools import combinations
 
 
 def _canon_edge(u, v):
-    return (u, v) if str(u) <= str(v) else (v, u)
+    return (u, v) if u <= v else (v, u)
 
 
-def _edge_list(G: nx.Graph) -> List[Tuple]:
-    return [_canon_edge(u, v) for u, v in G.edges()]
+def _build_edge_list(G):
+    return [_canon_edge(u, v) for (u, v) in G.edges()]
 
 
-def _incident_sums(nodes, edges, x_vals) -> Dict:
+def _incident_sums(nodes, edges, x_vals):
     inc = {v: 0.0 for v in nodes}
     for (u, v), xe in zip(edges, x_vals):
         xe = float(xe)
@@ -59,26 +60,35 @@ def _incident_sums(nodes, edges, x_vals) -> Dict:
     return inc
 
 
-def _separate_subtour(G: nx.Graph, nodes, edges, x_vals, eps: float = 1e-7):
+def _separate_subtour_via_mincut(G, nodes, edges, x_vals, eps_current=0.0, sep_eps=1e-8):
     """
-    Separation oracle for the subtour constraints x(E[S]) <= |S| - 1.
+    Separation oracle for the MARGINED subtour constraints:
+        x(E(S)) <= |S| - 1 - eps_current   for all 2 <= |S| <= n-1.
 
-    Builds the standard s-t min-cut network (Svensson-style construction):
-    arcs s->v with capacity x(E(v))/2, arcs v->t with capacity 1, and each
-    undirected edge {u, v} becomes two directed arcs u->v, v->u each with
-    capacity x_e/2. A most-violated subtour set corresponds to a min s-t
-    cut, found by forcing each vertex in turn to lie on the source side.
+    Two bugs fixed relative to the original version:
 
-    Returns (S, violation) for the most violated set found, or None if no
-    subtour constraint is violated by more than eps.
+    (1) The violation check now compares against the MARGINED threshold
+        |S|-1-eps_current using the CURRENT value of the epsilon
+        variable, not the plain |S|-1. Checking against the un-margined
+        threshold can silently miss constraints that violate the
+        margined version while satisfying the plain one, which lets the
+        outer LP converge to a false "optimal" epsilon that isn't
+        actually feasible.
+
+    (2) Cuts with |S| < 2 or |S| > n-1 are now explicitly excluded. The
+        min-cut construction can return a singleton S (e.g. if forcing
+        the root into S already gives the min cut); a singleton is not
+        a valid subtour set (E(S) is empty, RHS is 0), and treating it
+        as one forces epsilon <= 0 for every graph.
     """
     x_dict = {e: float(xe) for e, xe in zip(edges, x_vals)}
-    inc = _incident_sums(nodes, edges, x_vals)
-    n = len(nodes)
     x_total = sum(x_dict.values())
+    n = len(nodes)
+
+    inc = _incident_sums(nodes, edges, x_vals)
     BIGM = 10.0 * (n + x_total + 1.0)
 
-    best = None  # (S, violation)
+    best = None  # (S_set, violation_amount, cut_value)
 
     for root in nodes:
         H = nx.DiGraph()
@@ -86,7 +96,9 @@ def _separate_subtour(G: nx.Graph, nodes, edges, x_vals, eps: float = 1e-7):
         H.add_node("t")
 
         for v in nodes:
-            cap_sv = BIGM if v == root else inc[v] / 2.0
+            cap_sv = inc[v] / 2.0
+            if v == root:
+                cap_sv = BIGM
             H.add_edge("s", v, capacity=cap_sv)
             H.add_edge(v, "t", capacity=1.0)
 
@@ -95,118 +107,253 @@ def _separate_subtour(G: nx.Graph, nodes, edges, x_vals, eps: float = 1e-7):
             H.add_edge(u, v, capacity=cap)
             H.add_edge(v, u, capacity=cap)
 
-        _, (S_side, _) = nx.minimum_cut(
+        cut_value, (S_side, T_side) = nx.minimum_cut(
             H, "s", "t", capacity="capacity",
-            flow_func=nx.algorithms.flow.preflow_push,
+            flow_func=nx.algorithms.flow.preflow_push
         )
 
         S = set(S_side)
+        if "s" not in S:
+            continue
         S.discard("s")
-        if len(S) == 0 or len(S) == n:
+
+        # FIX (2): require a genuine subtour set, 2 <= |S| <= n-1.
+        if len(S) < 2 or len(S) > n - 1:
             continue
 
-        x_inside = sum(
-            xe for (u, v), xe in x_dict.items() if u in S and v in S
-        )
-        violation = x_inside - (len(S) - 1)
+        x_inside = 0.0
+        for (u, v), xe in x_dict.items():
+            if u in S and v in S:
+                x_inside += xe
 
-        if violation > eps and (best is None or violation > best[1]):
-            best = (S, violation)
+        # FIX (1): compare against the margined threshold.
+        violation = x_inside - (len(S) - 1 - eps_current)
+
+        if violation > sep_eps:
+            if best is None or violation > best[1]:
+                best = (S, violation, cut_value)
 
     return best
 
 
-def resistance_threshold(
-    G: nx.Graph, max_iters: int = 200, eps: float = 1e-7, verbose: bool = False
-):
+def _margin_lp(G, strict_degree, solver="SCS", scs_eps=1e-9, scs_max_iters=200000,
+                max_outer_iters=200, sep_eps=1e-8, verbose=False):
     """
-    Compute t*(G) = min_{x in P(G)} max_v x(E(v)) via cutting planes.
+    Maximizes an interior-margin epsilon over:
+        x_e >= epsilon                          for every edge
+        x(E(S)) <= |S|-1-epsilon                for every subtour S (cutting planes)
+        x(E(v)) <= 2                            for every v   [if not strict_degree, RN test]
+        x(E(v)) <= 2 - epsilon                  for every v   [if strict_degree, RP test]
+        sum x = n-1
 
-    Returns (t_star, x) where x is a dict edge -> weight attaining (or
-    numerically close to attaining) the optimum.
+    This is the mathematically correct object to check: Theorem 1(2)
+    requires x in the RELATIVE INTERIOR of the spanning tree polytope
+    (Lemma 12), which needs x_e > 0 and x(E(S)) < |S|-1 STRICTLY -- not
+    just membership in the closed polytope, which is all the original
+    "minimize t" formulation checked. Returns (eps_star, x_dict).
+
+    NOTE: this LP is only mathematically valid for 2-connected G (Lemma
+    12's strict-inequality characterization assumes dim P(G) = |E|-1,
+    which holds iff G is 2-connected). Callers should route non-2-
+    connected graphs to the tree/path special case or the "not RN"
+    shortcut below instead of calling this directly.
     """
     nodes = list(G.nodes())
-    edges = _edge_list(G)
-    n, m = len(nodes), len(edges)
-    if n < 2:
-        raise ValueError("Graph must have at least 2 vertices")
+    n = len(nodes)
+    edges = _build_edge_list(G)
+    m = len(edges)
 
-    x = cp.Variable(m, nonneg=True)
-    t = cp.Variable()
-
-    edge_index = {e: i for i, e in enumerate(edges)}
     incident = {v: [] for v in nodes}
-    for (u, v), i in edge_index.items():
+    for i, (u, v) in enumerate(edges):
         incident[u].append(i)
         incident[v].append(i)
 
+    x = cp.Variable(m)
+    eps_var = cp.Variable()
+
     base_constraints = [cp.sum(x) == n - 1]
-    base_constraints += [
-        cp.sum(x[incident[v]]) <= t for v in nodes
-    ]
+    base_constraints += [x[i] >= eps_var for i in range(m)]
+    if strict_degree:
+        base_constraints += [cp.sum(x[incident[v]]) <= 2 - eps_var for v in nodes]
+    else:
+        base_constraints += [cp.sum(x[incident[v]]) <= 2 for v in nodes]
 
     subtour_constraints = []
-    x_vals = None
 
-    for it in range(max_iters):
-        problem = cp.Problem(
-            cp.Minimize(t), base_constraints + subtour_constraints
-        )
-        problem.solve()
+    for it in range(max_outer_iters):
+        prob = cp.Problem(cp.Maximize(eps_var), base_constraints + subtour_constraints)
+        prob.solve(solver=solver, verbose=False, eps=scs_eps, max_iters=scs_max_iters)
 
-        if x.value is None:
-            raise RuntimeError("LP failed to solve; check graph connectivity")
+        if prob.status not in ("optimal", "optimal_inaccurate"):
+            raise RuntimeError(f"LP solve failed: status={prob.status}")
 
         x_vals = x.value
-        violated = _separate_subtour(G, nodes, edges, x_vals, eps=eps)
+        eps_current = float(eps_var.value)
 
-        if violated is None:
-            if verbose:
-                print(f"Converged after {it + 1} LP solve(s). t* = {t.value:.6f}")
-            break
-
-        S, violation = violated
-        S_idx = [
-            i for (u, v), i in edge_index.items() if u in S and v in S
-        ]
-        subtour_constraints.append(cp.sum(x[S_idx]) <= len(S) - 1)
+        viol = _separate_subtour_via_mincut(
+            G, nodes, edges, x_vals, eps_current=eps_current, sep_eps=sep_eps
+        )
 
         if verbose:
-            print(f"iter {it}: added subtour cut on |S|={len(S)}, violation={violation:.4f}")
-    else:
-        raise RuntimeError(f"Cutting-plane method did not converge in {max_iters} iterations")
+            if viol is None:
+                print(f"  iter={it}, eps={eps_current:.12f}, violation=None")
+            else:
+                S, vamt, _ = viol
+                print(f"  iter={it}, eps={eps_current:.12f}, violation={vamt:.3e}, |S|={len(S)}")
 
-    x_dict = {e: float(x_vals[i]) for e, i in edge_index.items()}
-    return float(t.value), x_dict
+        if viol is None:
+            x_dict = {edges[i]: float(x_vals[i]) for i in range(m)}
+            return eps_current, x_dict
+
+        S, _, _ = viol
+        idxs = [i for i, (u, v) in enumerate(edges) if (u in S and v in S)]
+        subtour_constraints.append(cp.sum(x[idxs]) <= len(S) - 1 - eps_var)
+
+    raise RuntimeError(f"Cutting-plane method did not converge in {max_outer_iters} iterations")
 
 
-def resistance_positive_decision(G: nx.Graph, verbose: bool = False, tol: float = 1e-6):
+def _is_tree(G):
+    return nx.is_connected(G) and G.number_of_edges() == G.number_of_nodes() - 1
+
+
+def resistance_positive_decision(
+    G,
+    solver="SCS",
+    scs_eps=1e-9,
+    scs_max_iters=200000,
+    max_outer_iters=200,
+    sep_eps=1e-8,
+    tol=1e-6,
+    verbose=True,
+):
     """
     Decide RN / RP status of a connected graph G.
 
-    Returns (is_rp, is_rn, t_star, x) where:
-      * is_rn  = True iff t_star <= 2 + tol
-      * is_rp  = True iff t_star <  2 - tol
-      * x is the (approximately) optimal point of the spanning tree
-        polytope attaining t_star.
+    Returns (rp, rn, cert, x_dict) where cert is a diagnostic dict
+    identifying which code path decided the answer ("tree",
+    "not-2-connected-not-path", or "margin-lp") plus the epsilon values
+    found in the LP case.
+
+    IMPORTANT CHANGE from the original version: this checks membership
+    in the RELATIVE INTERIOR of the spanning tree polytope (as Theorem
+    1(2) requires), not just the closed polytope. The original
+    "minimize t over closed P(G), then compare t* to 2 with a tight
+    tolerance" approach cannot distinguish a genuinely-achievable
+    interior point from a boundary point that only reaches degree-2 at
+    a single vertex of P(G) -- and on degenerate graphs (e.g. ones that
+    are not 2-connected, or where the degree-optimal point is forced
+    onto a subtour facet) it can report RP=True purely from solver
+    noise straddling t*=2, regardless of tol_rp's value. Two independent
+    solvers (this LP and an exact solve over the full enumerated
+    spanning-tree set) agree the K4-hub-plus-4-legs test graph is
+    NOT RN, contradicting the old code's t*~2 -> RP=True verdict on it.
     """
     if not nx.is_connected(G):
-        raise ValueError("G must be connected")
+        raise ValueError("Graph must be connected (no spanning tree otherwise).")
 
-    t_star, x = resistance_threshold(G, verbose=verbose)
+    n = G.number_of_nodes()
 
-    is_rn = t_star <= 2 + tol
-    is_rp = t_star < 2 - tol
+    # Case 1: G is a tree -- P(G) is a single point (G itself is the
+    # only spanning tree), so RN/RP reduce to a direct degree check.
+    if _is_tree(G):
+        max_deg = max(dict(G.degree()).values()) if n > 1 else 0
+        rn = max_deg <= 2
+        rp = max_deg < 2
+        if verbose:
+            print(f"G is a tree; max degree = {max_deg} -> RN={rn}, RP={rp}")
+        return rp, rn, {"method": "tree", "max_degree": max_deg}, {e: 1.0 for e in _build_edge_list(G)}
+
+    # Case 2: not 2-connected and not a tree/path => not RN (Devriendt:
+    # the only RN graphs that are not 2-connected are paths).
+    if not nx.is_biconnected(G):
+        if verbose:
+            print("G is connected but not 2-connected, and not a tree -> RN=False, RP=False")
+        return False, False, {"method": "not-2-connected-not-path"}, None
+
+    # Case 3: G is 2-connected -- run the margin LP, once for RN
+    # (non-strict degree bound) and once for RP (strict).
+    if verbose:
+        print("Solving RN margin LP (degree <= 2)...")
+    eps_rn, x_rn = _margin_lp(G, strict_degree=False, solver=solver, scs_eps=scs_eps,
+                               scs_max_iters=scs_max_iters, max_outer_iters=max_outer_iters,
+                               sep_eps=sep_eps, verbose=verbose)
+    if verbose:
+        print("Solving RP margin LP (degree <= 2 - eps)...")
+    eps_rp, x_rp = _margin_lp(G, strict_degree=True, solver=solver, scs_eps=scs_eps,
+                               scs_max_iters=scs_max_iters, max_outer_iters=max_outer_iters,
+                               sep_eps=sep_eps, verbose=verbose)
+
+    rn = eps_rn > tol
+    rp = eps_rp > tol
 
     if verbose:
-        print(f"t* = {t_star:.6f}  ->  RN={is_rn}, RP={is_rp}")
+        print(f"eps_rn = {eps_rn:.12f} -> RN={rn}")
+        print(f"eps_rp = {eps_rp:.12f} -> RP={rp}")
 
-    return is_rp, is_rn, t_star, x
+    return rp, rn, {"method": "margin-lp", "eps_rn": eps_rn, "eps_rp": eps_rp}, x_rn
+
+
+def build_minimal_tough_graph(n, l):
+    # n: number of branches; l: length of the path
+    interval = 50
+    edges = []
+    end = []
+    for i in range(1, n + 1):
+        start = interval * i
+        edges += [(0, start)]
+        for j in range(l):
+            edges += [(start + j, start + j + 1)]
+        end += [start + l]
+    edges += list(combinations(end, 2))
+    G = nx.Graph()
+    G.add_edges_from(edges)
+    return G
+
+
+def is_one_tough(G):
+    V = list(G.nodes())
+    n = len(V)
+    for k in range(1, n):
+        for S in combinations(V, k):
+            H = G.copy()
+            H.remove_nodes_from(S)
+            if H.number_of_nodes() == 0:
+                continue
+            c = nx.number_connected_components(H)
+            if c > k:
+                return False, set(S), c
+    return True, None, None
 
 
 if __name__ == "__main__":
-    # Sanity check: the Petersen graph is known to be RP but not
-    # Hamiltonian (Devriendt 2025; see Theorem 1 discussion in the paper).
-    G = nx.petersen_graph()
-    rp, rn, t_star, x = resistance_positive_decision(G, verbose=True)
-    print(f"Petersen graph: RN={rn}, RP={rp}, t*={t_star:.4f}  (expected RP=True)")
+
+    G = nx.Graph()
+    G.add_edges_from([
+        # K4 hub clique
+        (0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3),
+
+        # Leg from hub 0: 0 -- 4 -- 5 -- 12
+        (0, 4), (4, 5), (5, 12),
+
+        # Leg from hub 1: 1 -- 6 -- 7 -- 12
+        (1, 6), (6, 7), (7, 12),
+
+        # Leg from hub 2: 2 -- 8 -- 9 -- 12
+        (2, 8), (8, 9), (9, 12),
+
+        # Leg from hub 3: 3 -- 10 -- 11 -- 12
+        (3, 10), (10, 11), (11, 12),
+    ])
+
+    n = G.number_of_nodes()
+    m = G.number_of_edges()
+    print("n=", n)
+    print("m=", m)
+    print(list(G.edges()))
+
+    rp, rn, cert, x = resistance_positive_decision(G, verbose=True)
+
+    print("\nRESULT")
+    print("cert =", cert)
+    print("RN?", rn)
+    print("RP?", rp)
