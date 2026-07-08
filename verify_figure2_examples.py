@@ -38,10 +38,21 @@ probability to many specific trees, as long as the trees that do get
 weight collectively cover every edge. Redone with the correct
 edge-level criterion (cross-checked with both cvxpy and scipy's HiGHS
 solver), both panels show a genuine positive RN margin, not noise, and
-the advisor's original cutting-plane code (resistance.py, unmodified)
-independently agrees: both panels now come back RN=True, RP=False,
-matching their "SRN" captions. All nine panels below are now checked by
-the same `verify()` call with no special-cased panels.
+the advisor's cutting-plane LP independently agrees on the 2-connected
+cases it's used for: both panels come back RN=True, RP=False, matching
+their "SRN" captions. All nine panels below are now checked by the same
+`verify()` call with no special-cased panels.
+
+SEPARATELY, panel (A) (the bowtie) needed a real fix, not just a
+tolerance adjustment: bowtie's closed-polytope t* is exactly 2, which
+the plain "t* <= 2 + tol" rule reads as RN=True -- but bowtie is not
+2-connected and not a path, so it is PROVABLY not RN (a cited theorem
+in the paper: Devriendt, only paths are RN among non-2-connected
+graphs). resistance.py now checks this structural case (and the
+tree case, used by panel (I)) before ever reaching the LP, since the
+closed t* value cannot distinguish these cases correctly at any
+tolerance -- it isn't testing the same thing Theorem 1(2) requires on
+graphs where P(G) is not full-dimensional.
 
 Panel (I) is fully checked (representative instance P_7); panel (H)
 (Petersen) is fully checked, now including sprawling per its updated
@@ -172,10 +183,11 @@ def verify(label: str, G: nx.Graph, caption: str, check_sprawling: bool = False)
     is_rp, is_rn, t_star, _ = resistance.resistance_positive_decision(G, verbose=False)
     tough, _ = toughness.is_one_tough(G)
 
+    t_star_str = f"{t_star:.6f}" if t_star is not None else "N/A (structural pre-check)"
     print(f"  traceable    = {trace}")
     print(f"  2-connected  = {two_conn}")
-    print(f"  RN           = {is_rn}   [t* = {t_star:.6f}]")
-    print(f"  RP           = {is_rp}   [t* = {t_star:.6f}]")
+    print(f"  RN           = {is_rn}   [t* = {t_star_str}]")
+    print(f"  RP           = {is_rp}   [t* = {t_star_str}]")
     print(f"  1-tough      = {tough}")
 
     if check_sprawling:
@@ -273,8 +285,8 @@ Figure 1 example verification
   Figure 1 caption: "traceable, not 2-connected, not RN"
   traceable    = True
   2-connected  = False
-  RN           = True   [t* = 2.000000]
-  RP           = False   [t* = 2.000000]
+  RN           = False   [t* = N/A (structural pre-check)]
+  RP           = False   [t* = N/A (structural pre-check)]
   1-tough      = False
 
 (B) K_{2,3}  (n=5, m=6)
@@ -293,7 +305,7 @@ Figure 1 example verification
   RN           = True   [t* = 2.000000]
   RP           = False   [t* = 2.000000]
   1-tough      = False
-  sprawling    = False  (reason: condition (2) fails: U={'x2', 'y2'} is a spanning tree of G[U] under every H_i in S)
+  sprawling    = False  (reason: condition (2) fails: U={'y2', 'x2'} is a spanning tree of G[U] under every H_i in S)
 
 (D) Banana (4 parallel length-3 paths between two hubs)  (n=10, m=12)
   Figure 1 caption: "2-connected, not 1-tough, not traceable, not RN"
@@ -319,7 +331,7 @@ Figure 1 example verification
   RN           = True   [t* = 2.000000]
   RP           = False   [t* = 2.000000]
   1-tough      = True
-  sprawling    = False  (reason: condition (2) fails: U={'p0_1', 'p0_0'} is a spanning tree of G[U] under every H_i in S)
+  sprawling    = False  (reason: condition (2) fails: U={'h3', 'p3_0'} is a spanning tree of G[U] under every H_i in S)
 
 (G) K5 hub + 5 legs to a common point  (n=16, m=25)
   Figure 1 caption: "1-tough, not RN, not traceable"
@@ -342,8 +354,8 @@ Figure 1 example verification
   Figure 1 caption: "Path with >= 3 vertices: SRN, traceable, not 2-connected"
   traceable    = True
   2-connected  = False
-  RN           = True   [t* = 2.000000]
-  RP           = False   [t* = 2.000000]
+  RN           = True   [t* = N/A (structural pre-check)]
+  RP           = False   [t* = N/A (structural pre-check)]
   1-tough      = False
 
 ==============================================================================

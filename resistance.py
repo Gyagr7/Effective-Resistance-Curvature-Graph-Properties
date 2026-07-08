@@ -158,9 +158,31 @@ def resistance_positive_decision(
     verbose: bool = True,
 ):
     """
-    Decide the RN / RP status of a connected graph G by minimizing
-    t = max_v x(E(v)) over the spanning tree polytope via a
-    cutting-plane LP.
+    Decide the RN / RP status of a connected graph G.
+
+    For 2-connected graphs, this minimizes t = max_v x(E(v)) over the
+    spanning tree polytope via a cutting-plane LP (the advisor's
+    original method, unmodified) and classifies:
+        RN iff t* <= 2 + tol_rp,   RP iff t* < 2 - tol_rp
+
+    Two structural cases are checked FIRST, before the LP, because the
+    closed-polytope minimum t* cannot correctly decide RN on them no
+    matter the tolerance -- this isn't a numerical-precision issue, it's
+    that t* is the wrong quantity to compare on these graphs:
+
+    1. G is a tree (unique spanning tree = G itself): P(G) is a single
+       point, decided directly by G's own max degree.
+    2. G is connected but not 2-connected, and not a tree: G is
+       PROVABLY not RN, by a cited theorem in the paper (Devriendt: the
+       only RN graphs that are not 2-connected are paths). For example,
+       the bowtie graph (two triangles sharing a hub vertex) has
+       t*=2 exactly, which the closed-LP's "t* <= 2 + tol" rule reads as
+       RN=True -- but the bowtie is not 2-connected and not a path, so
+       it is definitively not RN regardless of what t* says. P(G) is
+       lower-dimensional for such graphs (some subtour constraint is a
+       forced equality across the whole polytope, not just at the
+       optimum), which is exactly the structural fact the closed t*
+       check has no way to see.
 
     Parameters
     ----------
@@ -172,16 +194,39 @@ def resistance_positive_decision(
 
     Returns
     -------
-    rp : bool -- True if t* < 2 (within tol_rp)
-    rn : bool -- True if t* <= 2 (within tol_rp)
-    t_star : float -- the optimal (closed-polytope) value found
-    x_dict : dict -- edge -> x_e at the solution
+    rp : bool
+    rn : bool
+    t_star : float or None -- None for the tree / not-2-connected cases,
+        where no LP is solved (there is no single "t*" for those).
+    x_dict : dict -- edge -> x_e; for the tree case this is the trivial
+        all-ones assignment, for the not-2-connected-not-path case it is
+        None (no witness point is needed for a "not RN" conclusion).
     """
     if not nx.is_connected(G):
         raise ValueError("Graph must be connected (no spanning tree otherwise).")
 
     nodes = list(G.nodes())
     n = len(nodes)
+
+    # --- Structural pre-checks (see docstring for why these come first) ---
+
+    is_tree = G.number_of_edges() == n - 1
+    if is_tree:
+        max_deg = max(dict(G.degree()).values()) if n > 1 else 0
+        rn = max_deg <= 2
+        rp = max_deg < 2
+        if verbose:
+            print(f"G is a tree; max degree = {max_deg} -> RN={rn}, RP={rp}")
+        return rp, rn, None, {e: 1.0 for e in _build_edge_list(G)}
+
+    if not nx.is_biconnected(G):
+        if verbose:
+            print("G is connected but not 2-connected, and not a tree "
+                  "-> RN=False, RP=False (Devriendt: only paths are RN "
+                  "among non-2-connected graphs)")
+        return False, False, None, None
+
+    # --- 2-connected case: the advisor's original cutting-plane LP ---
 
     edges = _build_edge_list(G)
     m = len(edges)

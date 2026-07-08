@@ -33,8 +33,10 @@ G = nx.petersen_graph()
 
 # RN / RP decision (Theorem 1)
 rp, rn, t_star, x = resistance.resistance_positive_decision(G, verbose=False)
-# t_star is the closed-polytope value t* = min_x max_v x(E(v));
-# rn = (t_star <= 2 + tol_rp), rp = (t_star < 2 - tol_rp)
+# t_star is the closed-polytope value t* = min_x max_v x(E(v)) for
+# 2-connected G; it is None for the tree / not-2-connected structural
+# pre-check cases (see below), which decide RN/RP without an LP at all.
+# rn = (t_star <= 2 + tol_rp), rp = (t_star < 2 - tol_rp) when t_star is used
 
 # Sprawling decision (Section 5) -- takes an adjacency-dict graph
 is_sprawl, info = sprawling.is_sprawling(sprawling.from_networkx(G))
@@ -49,9 +51,9 @@ is_1_tough, witness = toughness.is_one_tough(G)
 ### How `resistance.py` decides RN / RP
 
 `resistance_positive_decision` follows the advisor's original
-cutting-plane LP structure: it minimizes $t^* = \max_v x(E(v))$ over the
-closed spanning tree polytope $P(G)$ via a min-cut-based subtour
-separator (SCS solver), then classifies:
+cutting-plane LP structure for 2-connected graphs: it minimizes
+$t^* = \max_v x(E(v))$ over the closed spanning tree polytope $P(G)$ via
+a min-cut-based subtour separator (SCS solver), then classifies:
 
 $$\text{RN} \iff t^* \le 2 + \texttt{tol\_rp}, \qquad \text{RP} \iff t^* < 2 - \texttt{tol\_rp}$$
 
@@ -59,13 +61,22 @@ with a hard bipartite-imbalance certificate (`RP=False` whenever $G$ is
 bipartite with unequal parts) as an extra guard against solver noise.
 Defaults: `sep_eps=1e-15`, `tol_rp=1e-6`.
 
-A caution worth keeping in mind: on graphs where the true $t^*$ sits
-exactly at the boundary value $2$, this method's classification can be
-sensitive to solver precision -- we went through exactly this on the
-K4-hub-plus-4-legs test graph (panel (F) below) before resolving it; see
-that discussion in `verify_figure2_examples.py`'s module docstring and
-git history for the full account of what was and wasn't a real
-discrepancy.
+Two structural cases are checked **before** the LP, because $t^*$
+cannot correctly decide RN on them at any tolerance -- not a
+solver-precision issue, but a case where $t^*$ is the wrong quantity to
+compare:
+
+1. **G is a tree**: $P(G)$ is a single point, decided directly from
+   G's own max degree.
+2. **G is connected but not 2-connected, and not a tree**: G is
+   provably not RN (Devriendt: the only RN graphs that are not
+   2-connected are paths). The bowtie graph (two triangles sharing a
+   hub vertex) is the case that surfaced this: it has $t^*=2$ exactly,
+   which the plain `t* <= 2 + tol` rule reads as RN=True, but the
+   bowtie is not 2-connected and not a path, so it must be RN=False.
+   $P(G)$ is lower-dimensional for such graphs (some subtour constraint
+   is a forced equality across the *whole* polytope, not just at the
+   optimum), which the closed-$t^*$ check has no way to detect.
 
 Each module can also be run directly (`python resistance.py`, etc.) to
 execute a few built-in sanity checks against known examples from the
