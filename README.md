@@ -89,10 +89,7 @@ end-to-end, including:
 (the paper's main examples figure; formerly labeled "Figure 2"). Panel
 lettering, current revision: (A) bowtie, (B) K_{2,3}, (C) small
 2-hub/3-leg banana, (D) 2-hub/4-leg banana, (E) K3-hub+legs, (F)
-K4-hub+legs, (G) K5-hub+legs, (H) Petersen, (I) path family. (A
-previous figure revision included a Thomassen 34-graph panel and did
-not have panel (C); that panel no longer exists in the figure, and this
-file has been updated to match the current panel letters.)
+K4-hub+legs, (G) K5-hub+legs, (H) Petersen, (I) path family.
 
 Panels (A), (B), (D), (E), (G), (H), (I) all match their captions
 exactly. Panels **(C) and (F) are flagged as unresolved**: both are
