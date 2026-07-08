@@ -15,7 +15,7 @@ sprawling property, and toughness of graphs discussed in the paper:
 | `sprawling.py` | Decide whether a graph is *sprawling* (Section 5), a sufficient condition for RN (Theorem 8); every "sprawling" verdict comes with an explicit, independently re-verified witness collection. |
 | `toughness.py` | Compute exact (vertex) toughness and check 1-toughness, by brute force. |
 | `examples.py` | Graph constructions referenced in the paper (Petersen graph, grid graphs, the `G_t(s_1,...,s_t)` family from Theorem 4, etc.). |
-| `verify_figure2_examples.py` | Runs all three checkers against every example graph in Figure 2, labeled by panel letter, with real captured output baked into the file so a reviewer can read the results without running anything. |
+| `verify_figure2_examples.py` | Runs all three checkers against every example graph in Figure 1 (the paper's main examples figure), labeled by panel letter, with real captured output baked into the file so a reviewer can read the results without running anything. |
 
 ## Installation
 
@@ -85,16 +85,26 @@ end-to-end, including:
 - the `G_5(1,1,1,1,1)` construction from Theorem 4 is 1-tough but not RN,
   disproving Fiedler's conjecture that every 1-tough graph is RP.
 
-`python verify_figure2_examples.py` checks all nine panels of Figure 2:
-panels (A)-(D), (F), (G), (I) all match their captions exactly. Panel
-(E) is flagged as **unresolved** -- reconstructing it from the TikZ
-source and checking it two independent ways gives RN=False, which
-contradicts its "SRN" caption; see that file's module docstring and the
-printed note for panel (E) for details, pending confirmation of the
-intended graph structure. Panel (H) (the Thomassen 34-graph) is
-intentionally out of scope for this file -- its RP status is already
-established directly in the paper by Theorem 5's hand-constructed
-rational edge weighting, independent of any code here.
+`python verify_figure2_examples.py` checks all nine panels of Figure 1
+(the paper's main examples figure; formerly labeled "Figure 2"). Panel
+lettering, current revision: (A) bowtie, (B) K_{2,3}, (C) small
+2-hub/3-leg banana, (D) 2-hub/4-leg banana, (E) K3-hub+legs, (F)
+K4-hub+legs, (G) K5-hub+legs, (H) Petersen, (I) path family. (A
+previous figure revision included a Thomassen 34-graph panel and did
+not have panel (C); that panel no longer exists in the figure, and this
+file has been updated to match the current panel letters.)
+
+Panels (A), (B), (D), (E), (G), (H), (I) all match their captions
+exactly. Panels **(C) and (F) are flagged as unresolved**: both are
+built from the same "hub(s) connected via parallel 2-vertex legs to a
+common point" family, and both claim "SRN" (RN=True, RP=False) in their
+captions -- but exact spanning-tree enumeration (27 trees for (C), 2197
+for (F)), cross-validated with independent solvers, gives RN=False for
+both. The K3-hub version (E, "RP") and K5-hub version (G, "not RN") in
+the same family check out correctly, so the discrepancy appears tied
+specifically to the "SRN" claim on this construction, not the
+construction in general. See that file's module docstring and the
+printed notes for panels (C) and (F) for the full account.
 
 ## Scope and caveats
 
@@ -113,10 +123,13 @@ rational edge weighting, independent of any code here.
   used across the project.
 - The verification that the Thomassen 34-graph is RP (Theorem 5) uses a
   hand-constructed rational weighting rather than any code in this
-  repo; see the proof of Theorem 5 in the paper.
-- Panel (E) of Figure 2 (the K4-hub-plus-4-legs example) has an
-  open discrepancy between its "SRN" caption and this code's RN=False
-  verdict -- see `verify_figure2_examples.py` for the full account.
+  repo; see the proof of Theorem 5 in the paper. (Note: the current
+  revision of Figure 1 no longer includes a Thomassen 34-graph panel.)
+- Panels (C) and (F) of Figure 1 (both from the "hub(s)-plus-parallel-
+  legs" family) have an open discrepancy between their "SRN" captions
+  and this code's RN=False verdict, cross-validated by exact
+  spanning-tree enumeration -- see `verify_figure2_examples.py` for the
+  full account.
 
 ## Requirements
 
@@ -129,7 +142,7 @@ default, which ships with cvxpy).
 If you use this code, please cite the paper:
 
 ```bibtex
-@article{2026resistance,
+@article{agrahari2026resistance,
   title   = {On some structural properties of graphs with non-negative resistance curvature},
   author  = {Agrahari, Gyaneshwar and Bibby, Christin and Boros, Sean and Garcia, Hailey and Heiderscheidt, Fernando and Wang, Zhiyu},
   year    = {2026},
