@@ -129,7 +129,7 @@ default, which ships with cvxpy).
 If you use this code, please cite the paper:
 
 ```bibtex
-@article{agrahari2026resistance,
+@article{2026resistance,
   title   = {On some structural properties of graphs with non-negative resistance curvature},
   author  = {Agrahari, Gyaneshwar and Bibby, Christin and Boros, Sean and Garcia, Hailey and Heiderscheidt, Fernando and Wang, Zhiyu},
   year    = {2026},
