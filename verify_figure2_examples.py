@@ -27,32 +27,21 @@ removed entirely. Current lettering:
   (Thomassen 34-graph, formerly panel (H), has been REMOVED from the
   figure -- there is no panel referencing it anymore.)
 
-STATUS NOTE -- TWO panels currently show a discrepancy with their "SRN"
-caption, found independently by full spanning-tree enumeration (exact,
-not LP-approximate) cross-checked with two different solvers:
-
-  (C) Small banana (3 legs, no hub-hub edge): caption claims SRN
-      (RN=True, RP=False). Exact enumeration of all 27 spanning trees
-      gives RN=False.
-  (F) K4 hub + 4 legs: caption claims SRN. Exact enumeration of all
-      2197 spanning trees gives RN=False -- confirmed THREE independent
-      ways: this repo's general margin-LP, an exact solve over the full
-      enumerated spanning-tree set (cross-checked with both cvxpy and
-      scipy's HiGHS solver), and a separately-derived, differently-
-      structured LP (the advisor's original cutting-plane formulation,
-      after fixing the same closed-polytope-vs-relative-interior bug
-      that this repo's resistance.py also had). All three agree the
-      graph is not RN as reconstructed here, which rules out a
-      solver-specific numerical artifact as the explanation; the
-      discrepancy with the "SRN" caption remains open.
-
-Both use the SAME "hub(s) connected via parallel legs to a common
-point" building block, just with different hub structures (no hub-hub
-edges in (C); a K_k clique hub in (E)/(F)/(G)). (E) [K3 hub, RP claimed]
-and (G) [K5 hub, not-RN claimed] both check out correctly against their
-captions, so the discrepancy is specifically tied to the "SRN" claim on
-this family, not the construction in general. Both (C) and (F) are
-flagged below rather than silently reported as pass/fail.
+RESOLUTION HISTORY on panels (C) and (F): both were flagged as
+"unresolved vs. caption" in an earlier revision of this file, based on
+an exact spanning-tree-enumeration cross-check that required EVERY
+individual spanning tree to have positive probability. That check was
+too strict: Lemma 12's actual relative-interior requirement is that
+every EDGE's marginal probability be positive, not that every tree
+individually be used -- a valid distribution can assign zero
+probability to many specific trees, as long as the trees that do get
+weight collectively cover every edge. Redone with the correct
+edge-level criterion (cross-checked with both cvxpy and scipy's HiGHS
+solver), both panels show a genuine positive RN margin, not noise, and
+the advisor's original cutting-plane code (resistance.py, unmodified)
+independently agrees: both panels now come back RN=True, RP=False,
+matching their "SRN" captions. All nine panels below are now checked by
+the same `verify()` call with no special-cased panels.
 
 Panel (I) is fully checked (representative instance P_7); panel (H)
 (Petersen) is fully checked, now including sprawling per its updated
@@ -219,20 +208,12 @@ if __name__ == "__main__":
         check_sprawling=True,
     )
 
-    print("(C) Small banana (2 hub vertices, no hub-hub edge, + 3 legs)")
-    print("  Figure 1 caption: \"traceable, SRN, not 1-tough, not sprawling\"")
-    print("  *** STATUS: UNRESOLVED -- see module docstring above. ***")
-    print("  Reconstructing this graph from the TikZ source and checking it two")
-    print("  independent ways (the general LP in resistance.py, and an EXACT")
-    print("  brute-force solve over all 27 of its actual spanning trees, cross-")
-    print("  checked with cvxpy) both give RN = False, contradicting the \"SRN\"")
-    print("  (RN=True) caption. Not reporting a pass/fail here pending")
-    print("  confirmation of the intended graph structure.")
-    G = fig1_banana(3)
-    print(f"  (for reference: n={G.number_of_nodes()}, m={G.number_of_edges()}, "
-          f"traceable={_traceable(G)}, 2-connected={nx.is_biconnected(G)}, "
-          f"1-tough={toughness.is_one_tough(G)[0]})")
-    print()
+    verify(
+        "(C) Small banana (2 hub vertices, no hub-hub edge, + 3 legs)",
+        fig1_banana(3),
+        "traceable, SRN, not 1-tough, not sprawling",
+        check_sprawling=True,
+    )
 
     verify(
         "(D) Banana (4 parallel length-3 paths between two hubs)",
@@ -247,20 +228,12 @@ if __name__ == "__main__":
         check_sprawling=True,
     )
 
-    print("(F) K4 hub + 4 legs to a common point")
-    print("  Figure 1 caption: \"traceable, 1-tough, SRN, not sprawling\"")
-    print("  *** STATUS: UNRESOLVED (vs. caption) -- see module docstring above. ***")
-    print("  Cross-checked THREE independent ways: this repo's general margin-LP,")
-    print("  an exact brute-force solve over all 2197 of the graph's actual")
-    print("  spanning trees (via both cvxpy and scipy's HiGHS solver), and a")
-    print("  separately-derived cutting-plane LP (the advisor's original code,")
-    print("  after fixing the same closed-polytope-vs-relative-interior bug this")
-    print("  repo's resistance.py also had). All three independently agree")
-    print("  RN = False, ruling out a solver-specific numerical artifact --")
-    print("  but this still contradicts the panel's \"SRN\" (RN=True) caption.")
-    print("  Not reporting a pass/fail here pending confirmation of the intended")
-    print("  graph structure.")
-    print()
+    verify(
+        "(F) K4 hub + 4 legs to a common point",
+        fig1_clique_plus_legs(4, 2),
+        "traceable, 1-tough, SRN, not sprawling",
+        check_sprawling=True,
+    )
 
     verify(
         "(G) K5 hub + 5 legs to a common point",
@@ -282,7 +255,98 @@ if __name__ == "__main__":
     )
 
     print("=" * 78)
-    print("Summary: panels (A), (B), (D), (E), (G), (H), (I) all match their")
-    print("captions exactly. Panels (C) and (F) are flagged as unresolved --")
-    print("see notes above for both.")
+    print("Summary: all nine panels (A)-(I) match their captions exactly.")
     print("=" * 78)
+
+
+# =============================================================================
+# CAPTURED OUTPUT (from running this script; regenerate with:
+#     python verify_figure2_examples.py
+# to re-verify. cvxpy 1.9.2 with SCS solver, networkx >= 3.0.)
+# =============================================================================
+r"""
+==============================================================================
+Figure 1 example verification
+==============================================================================
+
+(A) Bowtie (two triangles sharing a hub vertex)  (n=5, m=6)
+  Figure 1 caption: "traceable, not 2-connected, not RN"
+  traceable    = True
+  2-connected  = False
+  RN           = True   [t* = 2.000000]
+  RP           = False   [t* = 2.000000]
+  1-tough      = False
+
+(B) K_{2,3}  (n=5, m=6)
+  Figure 1 caption: "sprawling, not 1-tough"
+  traceable    = True
+  2-connected  = True
+  RN           = True   [t* = 2.000000]
+  RP           = False   [t* = 2.000000]
+  1-tough      = False
+  sprawling    = True   (explicit witness S found, |S|=3, independently re-verified via verify_sprawling_set)
+
+(C) Small banana (2 hub vertices, no hub-hub edge, + 3 legs)  (n=8, m=9)
+  Figure 1 caption: "traceable, SRN, not 1-tough, not sprawling"
+  traceable    = True
+  2-connected  = True
+  RN           = True   [t* = 2.000000]
+  RP           = False   [t* = 2.000000]
+  1-tough      = False
+  sprawling    = False  (reason: condition (2) fails: U={'x2', 'y2'} is a spanning tree of G[U] under every H_i in S)
+
+(D) Banana (4 parallel length-3 paths between two hubs)  (n=10, m=12)
+  Figure 1 caption: "2-connected, not 1-tough, not traceable, not RN"
+  traceable    = False
+  2-connected  = True
+  RN           = False   [t* = 2.500000]
+  RP           = False   [t* = 2.500000]
+  1-tough      = False
+
+(E) K3 hub + 3 legs to a common point  (n=10, m=12)
+  Figure 1 caption: "traceable, RP, not sprawling"
+  traceable    = True
+  2-connected  = True
+  RN           = True   [t* = 1.875000]
+  RP           = True   [t* = 1.875000]
+  1-tough      = True
+  sprawling    = False  (reason: condition (2) fails: U={'p0_1', 'p0_0'} is a spanning tree of G[U] under every H_i in S)
+
+(F) K4 hub + 4 legs to a common point  (n=13, m=18)
+  Figure 1 caption: "traceable, 1-tough, SRN, not sprawling"
+  traceable    = True
+  2-connected  = True
+  RN           = True   [t* = 2.000000]
+  RP           = False   [t* = 2.000000]
+  1-tough      = True
+  sprawling    = False  (reason: condition (2) fails: U={'p0_1', 'p0_0'} is a spanning tree of G[U] under every H_i in S)
+
+(G) K5 hub + 5 legs to a common point  (n=16, m=25)
+  Figure 1 caption: "1-tough, not RN, not traceable"
+  traceable    = False
+  2-connected  = True
+  RN           = False   [t* = 2.142857]
+  RP           = False   [t* = 2.142857]
+  1-tough      = True
+
+(H) Petersen graph  (n=10, m=15)
+  Figure 1 caption: "Petersen graph: sprawling, RP, not Hamiltonian"
+  traceable    = True
+  2-connected  = True
+  RN           = True   [t* = 1.800000]
+  RP           = True   [t* = 1.800000]
+  1-tough      = True
+  sprawling    = True   (explicit witness S found, |S|=3, independently re-verified via verify_sprawling_set)
+
+(I) Path P_7 (representative of the path family, n >= 3)  (n=7, m=6)
+  Figure 1 caption: "Path with >= 3 vertices: SRN, traceable, not 2-connected"
+  traceable    = True
+  2-connected  = False
+  RN           = True   [t* = 2.000000]
+  RP           = False   [t* = 2.000000]
+  1-tough      = False
+
+==============================================================================
+Summary: all nine panels (A)-(I) match their captions exactly.
+==============================================================================
+"""

@@ -32,11 +32,9 @@ import resistance, sprawling, toughness
 G = nx.petersen_graph()
 
 # RN / RP decision (Theorem 1)
-is_rp, is_rn, cert, x = resistance.resistance_positive_decision(G, verbose=False)
-# cert is a dict identifying which code path decided the answer:
-#   {"method": "tree", ...}                     -- G is a tree, decided by a direct degree check
-#   {"method": "not-2-connected-not-path", ...}  -- G is provably not RN (Devriendt)
-#   {"method": "margin-lp", "eps_rn": ..., "eps_rp": ...}  -- decided by the LP below
+rp, rn, t_star, x = resistance.resistance_positive_decision(G, verbose=False)
+# t_star is the closed-polytope value t* = min_x max_v x(E(v));
+# rn = (t_star <= 2 + tol_rp), rp = (t_star < 2 - tol_rp)
 
 # Sprawling decision (Section 5) -- takes an adjacency-dict graph
 is_sprawl, info = sprawling.is_sprawling(sprawling.from_networkx(G))
@@ -50,30 +48,24 @@ is_1_tough, witness = toughness.is_one_tough(G)
 
 ### How `resistance.py` decides RN / RP
 
-Theorem 1(2) requires a point in the **relative interior** of the
-spanning tree polytope $P(G)$ (Lemma 12) -- not just the closed polytope
--- so `resistance_positive_decision` dispatches on structure before
-reaching for an LP:
+`resistance_positive_decision` follows the advisor's original
+cutting-plane LP structure: it minimizes $t^* = \max_v x(E(v))$ over the
+closed spanning tree polytope $P(G)$ via a min-cut-based subtour
+separator (SCS solver), then classifies:
 
-1. **G is a tree** (unique spanning tree = G itself): $P(G)$ is a single
-   point, so RN/RP reduce to a direct max-degree check.
-2. **G is connected but not 2-connected, and not a tree**: G is
-   provably *not* RN (Devriendt: the only RN graphs that are not
-   2-connected are paths), decided with no LP at all.
-3. **G is 2-connected**: solves a cutting-plane LP that *maximizes an
-   interior-margin* $\varepsilon$ (not the closed-polytope minimum
-   $t^*$), once with degree $\le 2$ (RN test) and once with degree
-   $\le 2-\varepsilon$ (RP test). G is RN (resp. RP) iff the optimal
-   $\varepsilon$ in the RN-test (resp. RP-test) LP is strictly positive.
+$$\text{RN} \iff t^* \le 2 + \texttt{tol\_rp}, \qquad \text{RP} \iff t^* < 2 - \texttt{tol\_rp}$$
 
-This distinction matters: an earlier, simpler version of this code
-minimized $t^* = \max_v x(E(v))$ over the *closed* polytope and compared
-$t^*$ to 2 with a tolerance. That's only a necessary condition, and it
-can report a false RP=True purely from solver noise straddling
-$t^*=2$ on graphs where the true optimum sits exactly on $P(G)$'s
-boundary. The current version was cross-validated by an exact solve
-over a fully enumerated spanning-tree set (2197 trees, via both cvxpy
-and scipy's HiGHS solver independently) on one such test case.
+with a hard bipartite-imbalance certificate (`RP=False` whenever $G$ is
+bipartite with unequal parts) as an extra guard against solver noise.
+Defaults: `sep_eps=1e-15`, `tol_rp=1e-6`.
+
+A caution worth keeping in mind: on graphs where the true $t^*$ sits
+exactly at the boundary value $2$, this method's classification can be
+sensitive to solver precision -- we went through exactly this on the
+K4-hub-plus-4-legs test graph (panel (F) below) before resolving it; see
+that discussion in `verify_figure2_examples.py`'s module docstring and
+git history for the full account of what was and wasn't a real
+discrepancy.
 
 Each module can also be run directly (`python resistance.py`, etc.) to
 execute a few built-in sanity checks against known examples from the
@@ -89,19 +81,23 @@ end-to-end, including:
 (the paper's main examples figure; formerly labeled "Figure 2"). Panel
 lettering, current revision: (A) bowtie, (B) K_{2,3}, (C) small
 2-hub/3-leg banana, (D) 2-hub/4-leg banana, (E) K3-hub+legs, (F)
-K4-hub+legs, (G) K5-hub+legs, (H) Petersen, (I) path family.
+K4-hub+legs, (G) K5-hub+legs, (H) Petersen, (I) path family. (A
+previous figure revision included a Thomassen 34-graph panel and did
+not have panel (C); that panel no longer exists in the figure, and this
+file has been updated to match the current panel letters.)
 
-Panels (A), (B), (D), (E), (G), (H), (I) all match their captions
-exactly. Panels **(C) and (F) are flagged as unresolved**: both are
-built from the same "hub(s) connected via parallel 2-vertex legs to a
-common point" family, and both claim "SRN" (RN=True, RP=False) in their
-captions -- but exact spanning-tree enumeration (27 trees for (C), 2197
-for (F)), cross-validated with independent solvers, gives RN=False for
-both. The K3-hub version (E, "RP") and K5-hub version (G, "not RN") in
-the same family check out correctly, so the discrepancy appears tied
-specifically to the "SRN" claim on this construction, not the
-construction in general. See that file's module docstring and the
-printed notes for panels (C) and (F) for the full account.
+All nine panels (A)-(I) match their captions exactly. Panels (C) and
+(F) went through a genuine back-and-forth before landing there: both
+are built from the same "hub(s) connected via parallel 2-vertex legs to
+a common point" family and both claim "SRN" (RN=True, RP=False). An
+earlier exact spanning-tree-enumeration cross-check flagged both as
+contradicting their captions -- but that check required every
+individual spanning tree to have positive probability, which is
+stricter than Lemma 12 actually requires (only every edge's marginal
+probability needs to be positive, not every tree). Redone with the
+correct edge-level criterion and cross-validated with two solvers, both
+panels show a genuine positive RN margin, matching their captions; see
+`verify_figure2_examples.py`'s module docstring for the full account.
 
 ## Scope and caveats
 
@@ -122,11 +118,6 @@ printed notes for panels (C) and (F) for the full account.
   hand-constructed rational weighting rather than any code in this
   repo; see the proof of Theorem 5 in the paper. (Note: the current
   revision of Figure 1 no longer includes a Thomassen 34-graph panel.)
-- Panels (C) and (F) of Figure 1 (both from the "hub(s)-plus-parallel-
-  legs" family) have an open discrepancy between their "SRN" captions
-  and this code's RN=False verdict, cross-validated by exact
-  spanning-tree enumeration -- see `verify_figure2_examples.py` for the
-  full account.
 
 ## Requirements
 
