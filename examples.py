@@ -101,8 +101,8 @@ if __name__ == "__main__":
 
     print("=== Petersen graph ===")
     G = petersen_graph()
-    rp, rn, cert, _ = resistance.resistance_positive_decision(G, verbose=False)
-    print(f"RN={rn}, RP={rp}  [{cert['method']}]  (expect RP=True)\n")
+    rp, rn, t_star, _ = resistance.resistance_positive_decision(G, verbose=False)
+    print(f"RN={rn}, RP={rp}  [t*={t_star:.4f}]  (expect RP=True)\n")
 
     print("=== Grid graph P_3 x P_3 ===")
     G = grid_graph(3, 3)
@@ -112,7 +112,7 @@ if __name__ == "__main__":
     print("=== G_5(1,1,1,1,1) [Theorem 4 construction] ===")
     G = toughness_family([1, 1, 1, 1, 1])
     tough, S = toughness.is_one_tough(G)
-    rp, rn, cert, _ = resistance.resistance_positive_decision(nx.convert_node_labels_to_integers(G), verbose=False)
+    rp, rn, t_star, _ = resistance.resistance_positive_decision(nx.convert_node_labels_to_integers(G), verbose=False)
     print(f"1-tough={tough} (expect True), RN={rn} (expect False)\n")
 
     print("=== Bowtie (two triangles sharing a bridge edge) ===")
