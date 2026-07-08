@@ -8,6 +8,8 @@ sprawling.py, and toughness.py.
 
 from __future__ import annotations
 
+from itertools import combinations
+
 import networkx as nx
 
 
@@ -48,6 +50,36 @@ def toughness_family(s: list[int]) -> nx.Graph:
             prev = node
         G.add_edge(prev, f"v{i}")
 
+    return G
+
+
+def build_minimal_tough_graph(n: int, l: int) -> nx.Graph:
+    """
+    Advisor's original constructor for the Theorem 4 / Lemma 15 family:
+    a hub vertex 0 connected via n branches (each a path of l edges) to
+    n "end" vertices, which are then pairwise connected into a clique.
+
+    This is the SAME construction as `toughness_family` above (a hub
+    connected to a clique via subdivided spokes, with the clique itself
+    left intact) -- just built with integer-labeled branch vertices
+    instead of string-labeled ones, and with all branches forced to
+    equal length l instead of allowing per-branch lengths s_1,...,s_t.
+    Kept here (rather than only using toughness_family) so any code
+    referencing this name by the advisor's original convention still
+    works; the paper uses the t=5, s_i>=1 case in the proof of Theorem 4.
+    """
+    interval = 50
+    edges = []
+    end = []
+    for i in range(1, n + 1):
+        start = interval * i
+        edges += [(0, start)]
+        for j in range(l):
+            edges += [(start + j, start + j + 1)]
+        end += [start + l]
+    edges += list(combinations(end, 2))
+    G = nx.Graph()
+    G.add_edges_from(edges)
     return G
 
 

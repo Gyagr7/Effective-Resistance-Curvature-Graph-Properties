@@ -40,7 +40,6 @@ straddling t*=2.
 
 import networkx as nx
 import cvxpy as cp
-from itertools import combinations
 
 
 def _canon_edge(u, v):
@@ -291,38 +290,6 @@ def resistance_positive_decision(
         print(f"eps_rp = {eps_rp:.12f} -> RP={rp}")
 
     return rp, rn, {"method": "margin-lp", "eps_rn": eps_rn, "eps_rp": eps_rp}, x_rn
-
-
-def build_minimal_tough_graph(n, l):
-    # n: number of branches; l: length of the path
-    interval = 50
-    edges = []
-    end = []
-    for i in range(1, n + 1):
-        start = interval * i
-        edges += [(0, start)]
-        for j in range(l):
-            edges += [(start + j, start + j + 1)]
-        end += [start + l]
-    edges += list(combinations(end, 2))
-    G = nx.Graph()
-    G.add_edges_from(edges)
-    return G
-
-
-def is_one_tough(G):
-    V = list(G.nodes())
-    n = len(V)
-    for k in range(1, n):
-        for S in combinations(V, k):
-            H = G.copy()
-            H.remove_nodes_from(S)
-            if H.number_of_nodes() == 0:
-                continue
-            c = nx.number_connected_components(H)
-            if c > k:
-                return False, set(S), c
-    return True, None, None
 
 
 if __name__ == "__main__":
