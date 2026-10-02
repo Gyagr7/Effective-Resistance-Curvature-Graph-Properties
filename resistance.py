@@ -17,13 +17,13 @@ Theorem 1 then says
 
 and `rn` decides each by the program of (guo2026lp, Theorem 2.1),
 
-    max t   s.t.   x(E_B) = n_B - 1                (every block B)
-                   x_e >= t                        (e in a 2-connected block)
-                   x(E_B[S]) + (|S|-1) t <= |S|-1  (S a proper nonempty set of vertices of such a B)
+    max t   s.t.   x(E) = n - 1
+                   x_e >= t                        (every edge e)
+                   x(E[S]) + (|S|-1) t <= |S|-1    (S a proper nonempty set of vertices)
                    d_v(x) + s t <= 2               (every v)
 
 with s = 1 for RP and s = 0 for RN, so the property holds exactly when the optimum is positive.
-Running the program over the blocks B rather than over G is `rn`'s own departure from (guo2026lp), described in the source of `certify/rn.c`.
+The program is only ever run on a 2-connected graph, which is `rn`'s own departure from (guo2026lp) and is described in the source of `certify/rn.c`: a connected graph that is not 2-connected is RN exactly when it is a path, so those graphs are answered structurally and the relative interior of P(G) is the strict system on everything that reaches the program.
 The certifier separates the rank inequalities on demand, each as a minimum cut.
 Under `--exact` it then re-solves the rows tight at the floating point optimum in rational arithmetic, both forwards for the vertex and transposed for the dual.
 Those two solutions bound the optimum from each side, which certifies its sign.
@@ -217,7 +217,7 @@ def resistance_positive_decision(
     Decide the RN / RP / SRN status of a connected graph G.
 
     This reads the verdict of `rn_report` back as plain Python.
-    The certifier decomposes G into blocks, so a path comes back SRN and every other graph with a cut vertex comes back not RN.
+    A graph that is not 2-connected is settled without a program: a path comes back SRN (RP for at most one edge), and every other graph with a cut vertex comes back not RN.
 
     Parameters
     ----------
@@ -261,16 +261,25 @@ def resistance_positive_decision(
 
     if verbose:
         n, m = report["n"], report["m"]
-        print(f"n={n}, m={m}, blocks={report['blocks']}, "
-              f"bridges={report['bridges']}")
-        print(f"separation: {report['rank_cuts']} rank cuts over "
-              f"{report['rounds']} rounds, {report['seconds']:.4f}s")
+        print(f"n={n}, m={m}, 2-connected={report['two_connected']}")
+        if report.get("shortcut"):
+            where = report.get("cut_vertex")
+            at = f" at {where}" if where is not None else ""
+            print(f"shortcut: {report['shortcut']}{at}, no program needed")
+        else:
+            print(f"separation: {report['rank_cuts']} rank cuts over "
+                  f"{report['rounds']} rounds, {report['seconds']:.4f}s")
         if exact:
             opt = report["exact"].get("optimum")
             lo = report["exact"].get("bound_lower")
             hi = report["exact"].get("bound_upper")
-            shown = opt if opt is not None else f"in [{lo}, {hi}]"
-            print(f"certified: optimum = {shown}")
+            why = report["exact"].get("reason")
+            if opt is not None:
+                print(f"certified: optimum = {opt}")
+            elif lo is not None or hi is not None:
+                print(f"certified: optimum in [{lo}, {hi}]")
+            else:
+                print(f"certified: {why or 'structurally'}")
         print(f"class={report['class']}  ->  RN={rn}, RP={rp}")
         if t_star is not None:
             print(f"witness: max_v d_v(x) = {t_star:.12f}")

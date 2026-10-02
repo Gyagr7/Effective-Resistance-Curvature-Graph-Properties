@@ -10,7 +10,7 @@ Citation keys below are those of `references.bib`.
 
 ## AI disclosure
 
-Claude Opus 5 (Anthropic) wrote `certify/rn.c` in its entirety, including the formulation of the linear program, the block decomposition, the separation routine, the exact rational certification, the I/O, and the comments.
+Claude Opus 5 (Anthropic) wrote `certify/rn.c` and `certify/sweep.py` in their entirety, including the formulation of the linear program, the structural shortcut and its lemma, the separation routine, the exact rational certification, the I/O, and the comments.
 It also drafted parts of the prose and the docstrings elsewhere in this repository, and the current form of `resistance.py`.
 Hailey Jay Garcia directed and supervised that work, reviewed the result, and is responsible for the mathematics it rests on and for the answers it reports.
 The mathematical content of the paper is the authors' own.
@@ -20,6 +20,7 @@ The mathematical content of the paper is the authors' own.
 | File | Purpose |
 |---|---|
 | `certify/rn.c` | The certifier: decide RN, RP, or SRN by linear programming over the spanning tree polytope, with optional exact rational certification of the answer. Written in C against GLPK and GMP. |
+| `certify/sweep.py` | Differential test for the certifier: run two builds of `certify/rn` over every connected graph of a given order, from nauty's `geng`, and compare their verdicts. |
 | `resistance.py` | Python wrapper around `certify/rn`. Serialize a graph, run the certifier, and read the verdict and witness back under the graph's own labels. |
 | `sprawling.py` | Decide whether a graph is *sprawling* (Section 5), a sufficient condition for RN (Theorem 8). Every "sprawling" verdict comes with an explicit, independently re-verified witness collection. |
 | `toughness.py` | Compute exact (vertex) toughness and check 1-toughness, by brute force. |
@@ -78,14 +79,17 @@ Theorem 1 (devriendt2025, agraharietal2026) says
 The certifier decides each by the linear program of (guo2026lp, Theorem 2.1),
 
 ```
-    max t   s.t.   x(E_B) = n_B - 1                (every block B)
-                   x_e >= t                        (e in a 2-connected block)
-                   x(E_B[S]) + (|S|-1) t <= |S|-1  (S a proper nonempty set of vertices of such a B)
+    max t   s.t.   x(E) = n - 1
+                   x_e >= t                        (every edge e)
+                   x(E[S]) + (|S|-1) t <= |S|-1    (S a proper nonempty set of vertices)
                    d_v(x) + s t <= 2               (every v)
 ```
 
 with s = 1 for RP and s = 0 for RN, so the property holds exactly when the optimum is positive.
-Running the program over the blocks B of G rather than over G itself is this implementation's own departure from (guo2026lp), and is what handles the relative interior when G has a cut vertex.
+The program is only ever run on a 2-connected graph, which is this implementation's own departure from (guo2026lp) and is how the relative interior is handled.
+A connected graph that is not 2-connected is RN exactly when it is a path, by a short lemma proved at the head of `certify/rn.c`, so a graph with a cut vertex is answered structurally: a path is SRN (RP when it has at most one edge) with witness x = 1, and nothing else with a cut vertex is RN.
+The report names the route taken in its `shortcut` field, and the cut vertex in `cut_vertex` when that is the reason.
+On what reaches the program, 2-connected graphs, P(G) carries the single equality x(E) = n - 1 and the relative interior really is the strict system above.
 The rank inequalities are separated on demand, each as a minimum cut.
 
 Under `exact=True`, the default, the certifier then re-solves the rows tight at the floating point optimum in rational arithmetic, forwards for the primal vertex and transposed for the dual bound.

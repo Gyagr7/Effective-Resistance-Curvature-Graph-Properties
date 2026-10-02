@@ -2,7 +2,7 @@
  * rn.c -- recognise RN / RP / SRN graphs.
  *
  * AI disclosure.
- * Claude Opus 5 (Anthropic) wrote this file in its entirety: the formulation of the program, the block decomposition, the separation routine, the exact rational certification, the I/O, and these comments.
+ * Claude Opus 5 (Anthropic) wrote this file in its entirety: the formulation of the program, the structural shortcut, the separation routine, the exact rational certification, the I/O, and these comments.
  * Hailey Jay Garcia directed and supervised that work, reviewed the result, and is responsible for the correctness of the mathematics it rests on and of the answers it reports.
  *
  * Citation keys are those of ../references.bib.
@@ -19,15 +19,26 @@
  *
  * The delicate point is the relative interior, which one does not get by making the inequalities strict the moment G has a bridge.
  * (guo2026lp) handles it by measuring slack against an explicit interior point, the uniform spanning tree marginal vector.
- * We take the other route and quotient the difficulty out first.
- * Spanning trees of G restrict to spanning trees of its blocks and conversely, so P(G) is the product of the P(B) over the blocks B of G, and relative interiors multiply.
- * A bridge block forces x_e = 1; a 2-connected block carries no implicit equality but x(E_B) = n_B - 1, so on it the relative interior really is the strict system.
+ * We take the other route and remove the difficulty structurally, by a lemma that leaves the program a single case to decide.
+ *
+ *   Lemma.  A connected graph that is not 2-connected is RN exactly when it is a path.
+ *
+ *   Proof.  Let v be a cut vertex of G, lying in the blocks B_1, ..., B_k, k >= 2.
+ *   Spanning trees of G restrict to spanning trees of its blocks and conversely, so P(G) is the product of the P(B_i) and d_v(x) is the sum of the d_v^{B_i}(x).
+ *   Every spanning tree of B_i uses an edge at v, so d_v^{B_i}(x) >= 1 on P(B_i), with equality for all x only when B_i is a bridge.
+ *   When B_i is 2-connected, v has two neighbours in it and some spanning tree of B_i uses both of those edges, so d_v^{B_i}(x) > 1 on P(B_i)^o.
+ *   Hence d_v(x) > 2 on P(G)^o unless k = 2 and both blocks are bridges.
+ *   So in an RN graph every block at a cut vertex is a bridge and every cut vertex lies in exactly two of them: G is a tree of maximum degree 2, a path.
+ *   Conversely P_n is RN at x = 1, and RP exactly when n <= 2.  []
+ *
+ * A path is therefore answered outright, and so is every other graph with a cut vertex, which leaves the program only 2-connected graphs.
+ * There P(G) carries the one equality x(E) = n - 1 and no implicit one, so there the relative interior really is the strict system.
  * That leaves one program with integer data, and integer data is what makes exact rational arithmetic practical:
  *
- *     max t   s.t.   x(E_B) = n_B - 1                          (every block B)
- *                    x_e >= t                        (e in a 2-connected block)
- *                    x(E_B[S]) + (|S|-1) t <= |S|-1   (S a proper nonempty set
- *                                                      of vertices of such a B)
+ *     max t   s.t.   x(E) = n - 1
+ *                    x_e >= t                                   (every edge e)
+ *                    x(E[S]) + (|S|-1) t <= |S|-1     (S a proper nonempty set
+ *                                                            of vertices of G)
  *                    d_v(x) + s t <= 2                              (every v)
  *
  * with s = 0 for RN and s = 1 for RP, x >= 0 and -n <= t <= 1.
@@ -659,43 +670,22 @@ static int graph_from_json(const JV *o, Graph *g, const char **err)
 	return 1;
 }
 
-/* ------------------------------------------------------------------- blocks */
+/* ------------------------------------------------- the structural shortcut */
 
 /*
- * Find the blocks of G, with each bridge counting as a block of one edge.
- * Spanning trees of G restrict to spanning trees of the blocks and conversely, so P(G) is the product of the P(B) and relative interiors multiply.
- * A bridge block has P(B) = {1}, so its edge is forced.
- * Every other block is 2-connected, and on it the relative interior is the strict system.
+ * Decide 2-connectivity, and name a cut vertex when there is one.
+ * Return 1 when G is 2-connected, and 0 otherwise, setting *cut to a cut vertex, or to -1 when there is none (n <= 2).
+ * G is already known to be connected, so one scan from vertex 0 sees everything.
+ * This is Tarjan's low-link scan, iterative, and it keeps no edge stack: by the lemma at the head of the file the blocks themselves are never needed.
  */
-typedef struct {
-	int nb;
-	int *eof;		/* block of each edge */
-	int *bstart, *bedge;	/* edges of block b: bedge[bstart[b]..bstart[b+1]) */
-	int *vstart, *bvert;	/* and its vertices, likewise */
-} Blocks;
-
-static void blocks_free(Blocks *B)
+static int two_connected(const Graph *g, int *cut)
 {
-	free(B->eof); free(B->bstart); free(B->bedge);
-	free(B->vstart); free(B->bvert);
-}
+	int n = g->n, m = g->m, i, a, timer = 0, top = 0, kids = 0, found = -1;
+	int *head, *nxt, *to, *disc, *low, *pe, *it, *vstk;
 
-static void blocks_find(const Graph *g, Blocks *B)
-{
-	int n = g->n, m = g->m, i, a, r, timer = 0, top = 0, etop = 0, nb = 0;
-	int *head, *nxt, *to, *disc, *low, *pe, *it, *vstk, *estk, *cnt, *mark;
-
-	memset(B, 0, sizeof *B);
-	B->eof = xmalloc((size_t)(m + 1) * sizeof *B->eof);
-	for (i = 0; i < m; i++)
-		B->eof[i] = -1;
-	if (m == 0) {
-		B->bstart = xcalloc(1, sizeof *B->bstart);
-		B->vstart = xcalloc(1, sizeof *B->vstart);
-		B->bedge = xmalloc(sizeof *B->bedge);
-		B->bvert = xmalloc(sizeof *B->bvert);
-		return;
-	}
+	*cut = -1;
+	if (n < 3)
+		return 0;
 
 	head = xmalloc((size_t)n * sizeof *head);
 	nxt = xmalloc((size_t)m * 2 * sizeof *nxt);
@@ -711,91 +701,67 @@ static void blocks_find(const Graph *g, Blocks *B)
 	pe = xmalloc((size_t)n * sizeof *pe);
 	it = xmalloc((size_t)n * sizeof *it);
 	vstk = xmalloc((size_t)n * sizeof *vstk);
-	estk = xmalloc((size_t)m * sizeof *estk);
 
-	for (r = 0; r < n; r++) {
-		if (disc[r])
-			continue;
-		disc[r] = low[r] = ++timer;
-		pe[r] = -1;
-		it[r] = head[r];
-		vstk[top++] = r;
-		while (top) {
-			int v = vstk[top - 1];
-			if (it[v] >= 0) {
-				int w;
-				a = it[v];
-				it[v] = nxt[a];
-				if (pe[v] >= 0 && (a >> 1) == (pe[v] >> 1))
-					continue;		/* the edge we came in on */
-				w = to[a];
-				if (!disc[w]) {
-					estk[etop++] = a >> 1;
-					disc[w] = low[w] = ++timer;
-					pe[w] = a;
-					it[w] = head[w];
-					vstk[top++] = w;
-				} else if (disc[w] < disc[v]) {
-					estk[etop++] = a >> 1;
-					if (disc[w] < low[v])
-						low[v] = disc[w];
-				}
-			} else {
-				top--;
-				if (top) {
-					int u = vstk[top - 1];
-					if (low[v] < low[u])
-						low[u] = low[v];
-					if (low[v] >= disc[u]) {	/* u cuts v off: a block closes */
-						int root = pe[v] >> 1, e;
-						do {
-							e = estk[--etop];
-							B->eof[e] = nb;
-						} while (e != root);
-						nb++;
-					}
-				}
+	disc[0] = low[0] = ++timer;
+	pe[0] = -1;
+	it[0] = head[0];
+	vstk[top++] = 0;
+	while (top) {
+		int v = vstk[top - 1];
+		if (it[v] >= 0) {
+			int w;
+			a = it[v];
+			it[v] = nxt[a];
+			if (pe[v] >= 0 && (a >> 1) == (pe[v] >> 1))
+				continue;		/* the edge we came in on */
+			w = to[a];
+			if (!disc[w]) {
+				if (v == 0)
+					kids++;
+				disc[w] = low[w] = ++timer;
+				pe[w] = a;
+				it[w] = head[w];
+				vstk[top++] = w;
+			} else if (disc[w] < low[v]) {
+				low[v] = disc[w];
+			}
+		} else {
+			top--;
+			if (top) {
+				int u = vstk[top - 1];
+				if (low[v] < low[u])
+					low[u] = low[v];
+				if (u != 0 && low[v] >= disc[u] && found < 0)
+					found = u;	/* u cuts v off */
 			}
 		}
 	}
+	if (found < 0 && kids > 1)
+		found = 0;			/* the root, with two subtrees */
 
-	B->nb = nb;
-	cnt = xcalloc((size_t)nb + 1, sizeof *cnt);
-	for (i = 0; i < m; i++)
-		cnt[B->eof[i] + 1]++;
-	B->bstart = xmalloc((size_t)(nb + 1) * sizeof *B->bstart);
-	B->bstart[0] = 0;
-	for (i = 0; i < nb; i++)
-		B->bstart[i + 1] = B->bstart[i] + cnt[i + 1];
-	B->bedge = xmalloc((size_t)m * sizeof *B->bedge);
-	memcpy(cnt, B->bstart, (size_t)nb * sizeof *cnt);
-	for (i = 0; i < m; i++)
-		B->bedge[cnt[B->eof[i]]++] = i;
-
-	/* vertices of each block, from its edges */
-	B->vstart = xmalloc((size_t)(nb + 1) * sizeof *B->vstart);
-	B->bvert = xmalloc((size_t)(2 * m) * sizeof *B->bvert);
-	mark = xmalloc((size_t)n * sizeof *mark);
-	for (i = 0; i < n; i++)
-		mark[i] = -1;
-	B->vstart[0] = 0;
-	for (i = 0; i < nb; i++) {
-		int k = B->vstart[i], j;
-		for (j = B->bstart[i]; j < B->bstart[i + 1]; j++) {
-			int e = B->bedge[j], p;
-			for (p = 0; p < 2; p++) {
-				int v = p ? g->ev[e] : g->eu[e];
-				if (mark[v] != i) {
-					mark[v] = i;
-					B->bvert[k++] = v;
-				}
-			}
-		}
-		B->vstart[i + 1] = k;
-	}
-	free(mark); free(cnt);
 	free(head); free(nxt); free(to);
-	free(disc); free(low); free(pe); free(it); free(vstk); free(estk);
+	free(disc); free(low); free(pe); free(it); free(vstk);
+	*cut = found;
+	return found < 0;
+}
+
+/* Is the connected graph G a path?  Trees of maximum degree 2 and nothing else. */
+static int is_path(const Graph *g)
+{
+	int n = g->n, i, ok = 1;
+	int *deg;
+	if (g->m != n - 1)
+		return 0;
+	deg = xcalloc((size_t)n, sizeof *deg);
+	for (i = 0; i < g->m; i++) {
+		deg[g->eu[i]]++;
+		deg[g->ev[i]]++;
+	}
+	for (i = 0; i < n; i++)
+		if (deg[i] > 2)
+			ok = 0;
+	free(deg);
+	return ok;
 }
 
 /* ------------------------------------------------------------- the row store */
@@ -857,32 +823,27 @@ static double row_value(const Row *row, const double *z)
  * Build the fixed part of the program.
  * Passing strict = 0 gives the RN degree rows d_v(x) <= 2, and strict = 1 gives the RP rows d_v(x) + t <= 2.
  */
-static void rows_build(Rows *R, const Graph *g, const Blocks *B, int strict)
+static void rows_build(Rows *R, const Graph *g, int strict)
 {
-	int n = g->n, m = g->m, b, i, v, len;
+	int n = g->n, m = g->m, i, v, len;
 	int *idx = xmalloc((size_t)(m + 2) * sizeof *idx);
 	int *cf = xmalloc((size_t)(m + 2) * sizeof *cf);
 
 	memset(R, 0, sizeof *R);
 	R->ncol = m + 1;
+	idx[0] = cf[0] = 0;		/* only the m = 0 case would read these, and that case never reaches here */
 
-	for (b = 0; b < B->nb; b++) {			/* x(E_B) = n_B - 1 */
-		len = 0;
-		for (i = B->bstart[b]; i < B->bstart[b + 1]; i++) {
-			idx[len] = B->bedge[i];
-			cf[len++] = 1;
-		}
-		rows_add(R, idx, cf, len, B->vstart[b + 1] - B->vstart[b] - 1, ROW_EQ);
+	len = 0;					/* x(E) = n - 1 */
+	for (i = 0; i < m; i++) {
+		idx[len] = i;
+		cf[len++] = 1;
 	}
+	rows_add(R, idx, cf, len, n - 1, ROW_EQ);
 
-	for (b = 0; b < B->nb; b++) {			/* x_e >= t inside 2-connected blocks */
-		if (B->vstart[b + 1] - B->vstart[b] < 3)
-			continue;			/* a bridge: its edge is already fixed */
-		for (i = B->bstart[b]; i < B->bstart[b + 1]; i++) {
-			idx[0] = B->bedge[i]; cf[0] = -1;
-			idx[1] = m;           cf[1] = 1;
-			rows_add(R, idx, cf, 2, 0, ROW_LE);
-		}
+	for (i = 0; i < m; i++) {			/* x_e >= t */
+		idx[0] = i; cf[0] = -1;
+		idx[1] = m; cf[1] = 1;
+		rows_add(R, idx, cf, 2, 0, ROW_LE);
 	}
 
 	for (v = 0; v < n; v++) {			/* d_v(x) [+ t] <= 2 */
@@ -1074,60 +1035,52 @@ static void dnet_cut(DNet *N, int s, int nloc, unsigned char *side, int *q)
 /* ---------------------------------------------- separating the rank inequalities */
 
 /*
- * Find a violated set for the block b of G, if there is one.
+ * Find a violated rank inequality, if there is one.
  * The inequality is
  *
- *     x(E_B[S]) + (|S|-1) t <= |S|-1,   that is,   Phi(S) >= C,   C = 1 - t,
+ *     x(E[S]) + (|S|-1) t <= |S|-1,   that is,   Phi(S) >= C,   C = 1 - t,
  *
- * for Phi(S) = C|S| - x(E_B[S]), and
+ * for Phi(S) = C|S| - x(E[S]), and
  *
  *     2 Phi(S) = sum_{v in S} (2C - d_v(x)) + x(dS)
  *
  * is a cut function of S, so minimising it is a minimum s-t cut.
- * Singletons give Phi = C exactly and so never register, but S = V(B) would, so the minimisation runs over proper nonempty S only.
- * Fix one vertex v0 and, for every other u, force u out of S and then into it; that covers all such S in 2(n_B - 1) flows.
+ * Singletons give Phi = C exactly and so never register, but S = V would, so the minimisation runs over proper nonempty S only.
+ * Fix one vertex v0 and, for every other u, force u out of S and then into it; that covers all such S in 2(n - 1) flows.
  *
- * Append each set found to *cuts, as n flags, and its block to *cutb.
+ * Append each set found to *cuts, as n flags.
  */
-static int separate_block(const Graph *g, const Blocks *B, int b, const double *x,
-			  double t, unsigned char **cuts, int **cutb, int *ncuts,
-			  int *cap)
+static int separate(const Graph *g, const double *x, double t,
+		    unsigned char **cuts, int *ncuts, int *cap)
 {
-	int nloc = B->vstart[b + 1] - B->vstart[b];
-	int nbe = B->bstart[b + 1] - B->bstart[b];
-	int n = g->n, i, k, added = 0, s = nloc, snk = nloc + 1;
-	int *loc = xmalloc((size_t)n * sizeof *loc);
+	int n = g->n, m = g->m, i, k, added = 0, s = n, snk = n + 1;
 	double C = 1.0 - t, neg = 0.0, inf = 1.0;
-	double *w = xmalloc((size_t)nloc * sizeof *w);
-	int *q = xmalloc((size_t)(nloc + 2) * sizeof *q);
-	unsigned char *side = xmalloc((size_t)nloc);
+	double *w = xmalloc((size_t)n * sizeof *w);
+	int *q = xmalloc((size_t)(n + 2) * sizeof *q);
 	unsigned char *flags = xmalloc((size_t)n);
 	unsigned char *found = NULL;
 	double *viol = NULL;
 	int nfound = 0;
 	DNet N;
 
-	if (nloc < 3) { free(loc); free(w); free(q); free(side); free(flags); return 0; }
-	found = xmalloc((size_t)(2 * nloc) * (size_t)n);
-	viol = xmalloc((size_t)(2 * nloc) * sizeof *viol);
+	if (n < 3) { free(w); free(q); free(flags); return 0; }
+	found = xmalloc((size_t)(2 * n) * (size_t)n);
+	viol = xmalloc((size_t)(2 * n) * sizeof *viol);
 
-	for (i = 0; i < nloc; i++)
-		loc[B->bvert[B->vstart[b] + i]] = i;
-	for (i = 0; i < nloc; i++)
+	for (i = 0; i < n; i++)
 		w[i] = 2.0 * C;
-	for (i = 0; i < nbe; i++) {
-		int e = B->bedge[B->bstart[b] + i];
-		w[loc[g->eu[e]]] -= x[e];
-		w[loc[g->ev[e]]] -= x[e];
-		inf += 2.0 * fabs(x[e]);
+	for (i = 0; i < m; i++) {
+		w[g->eu[i]] -= x[i];
+		w[g->ev[i]] -= x[i];
+		inf += 2.0 * fabs(x[i]);
 	}
-	for (i = 0; i < nloc; i++) {
+	for (i = 0; i < n; i++) {
 		if (w[i] < 0.0) neg += -w[i];
 		inf += fabs(w[i]);
 	}
 
-	dnet_init(&N, nloc + 2, nbe + 2 * nloc + 4);
-	for (k = 0; k < 2 * (nloc - 1); k++) {
+	dnet_init(&N, n + 2, m + 2 * n + 4);
+	for (k = 0; k < 2 * (n - 1); k++) {
 		int u = 1 + k / 2, in_, out_;
 		double f;
 
@@ -1135,12 +1088,10 @@ static int separate_block(const Graph *g, const Blocks *B, int b, const double *
 		else            { in_ = u; out_ = 0; }	/* u in S, v0 out */
 
 		dnet_reset(&N);
-		for (i = 0; i < nbe; i++) {
-			int e = B->bedge[B->bstart[b] + i];
-			if (x[e] > 1e-12)
-				dnet_arc(&N, loc[g->eu[e]], loc[g->ev[e]], x[e], x[e]);
-		}
-		for (i = 0; i < nloc; i++) {
+		for (i = 0; i < m; i++)
+			if (x[i] > 1e-12)
+				dnet_arc(&N, g->eu[i], g->ev[i], x[i], x[i]);
+		for (i = 0; i < n; i++) {
 			if (w[i] < -1e-15)     dnet_arc(&N, s, i, -w[i], 0.0);
 			else if (w[i] > 1e-15) dnet_arc(&N, i, snk, w[i], 0.0);
 		}
@@ -1151,11 +1102,7 @@ static int separate_block(const Graph *g, const Blocks *B, int b, const double *
 		if (f - neg > 2.0 * C - CUT_TOL)
 			continue;
 
-		dnet_cut(&N, s, nloc, side, q);
-		memset(flags, 0, (size_t)n);
-		for (i = 0; i < nloc; i++)
-			if (side[i])
-				flags[B->bvert[B->vstart[b] + i]] = 1;
+		dnet_cut(&N, s, n, flags, q);
 		memcpy(found + (size_t)nfound * n, flags, (size_t)n);
 		viol[nfound++] = 2.0 * C - (f - neg);
 	}
@@ -1172,43 +1119,38 @@ static int separate_block(const Graph *g, const Blocks *B, int b, const double *
 		viol[best] = 0.0;
 		memcpy(flags, found + (size_t)best * n, (size_t)n);
 		for (i = 0; i < *ncuts + added; i++)
-			if ((*cutb)[i] == b && !memcmp(*cuts + (size_t)i * n, flags, (size_t)n))
+			if (!memcmp(*cuts + (size_t)i * n, flags, (size_t)n))
 				break;
 		if (i < *ncuts + added)
 			continue;
 		if (*ncuts + added == *cap) {
 			*cap = *cap ? 2 * *cap : 128;
 			*cuts = xrealloc(*cuts, (size_t)*cap * (size_t)n);
-			*cutb = xrealloc(*cutb, (size_t)*cap * sizeof **cutb);
 		}
 		memcpy(*cuts + (size_t)(*ncuts + added) * n, flags, (size_t)n);
-		(*cutb)[*ncuts + added] = b;
 		added++;
 	}
 	*ncuts += added;
 	dnet_free(&N);
-	free(loc); free(w); free(q); free(side); free(flags);
+	free(w); free(q); free(flags);
 	free(found); free(viol);
 	return added;
 }
 
-/* Build the row for the set S of block b. */
-static void add_cut_row(Rows *R, const Graph *g, const Blocks *B, int b,
-			const unsigned char *flags)
+/* Build the row for the set S. */
+static void add_cut_row(Rows *R, const Graph *g, const unsigned char *flags)
 {
-	int m = R->ncol - 1, i, len = 0, size = 0;
+	int n = g->n, m = R->ncol - 1, i, len = 0, size = 0;
 	int *idx = xmalloc((size_t)(m + 2) * sizeof *idx);
 	int *cf = xmalloc((size_t)(m + 2) * sizeof *cf);
 
-	for (i = B->vstart[b]; i < B->vstart[b + 1]; i++)
-		size += flags[B->bvert[i]];
-	for (i = B->bstart[b]; i < B->bstart[b + 1]; i++) {
-		int e = B->bedge[i];
-		if (flags[g->eu[e]] && flags[g->ev[e]]) {
-			idx[len] = e;
+	for (i = 0; i < n; i++)
+		size += flags[i];
+	for (i = 0; i < m; i++)
+		if (flags[g->eu[i]] && flags[g->ev[i]]) {
+			idx[len] = i;
 			cf[len++] = 1;
 		}
-	}
 	idx[len] = m;
 	cf[len++] = size - 1;
 	rows_add(R, idx, cf, len, size - 1, ROW_LE);
@@ -1240,18 +1182,16 @@ static void program_free(Program *P)
  * Both programs are feasible, since t = -n does it, and bounded, since t <= 1, so an optimum always exists.
  * A failure here therefore belongs to the solver, and it is reported as such rather than as an answer.
  */
-static void program_solve(Program *P, const Graph *g, const Blocks *B, int strict,
-			  int exact)
+static void program_solve(Program *P, const Graph *g, int strict, int exact)
 {
 	glp_prob *lp;
 	glp_smcp parm;
 	unsigned char *cuts = NULL;
-	int *cutb = NULL;
-	int ncuts = 0, cap = 0, round, b, i;
+	int ncuts = 0, cap = 0, round, i;
 
 	memset(P, 0, sizeof *P);
 	P->st = -1;
-	rows_build(&P->R, g, B, strict);
+	rows_build(&P->R, g, strict);
 	P->z = xcalloc((size_t)P->R.ncol, sizeof *P->z);
 	lp = glp_from_rows(&P->R, g->n, exact);
 
@@ -1260,7 +1200,7 @@ static void program_solve(Program *P, const Graph *g, const Blocks *B, int stric
 	parm.presolve = GLP_OFF;
 
 	for (round = 1; round <= MAX_ROUNDS; round++) {
-		int added = 0, before = ncuts, st;
+		int added, before = ncuts, st;
 		if (glp_simplex(lp, &parm) != 0)
 			goto done;
 		st = glp_get_status(lp);
@@ -1277,15 +1217,13 @@ static void program_solve(Program *P, const Graph *g, const Blocks *B, int stric
 			P->z[i] = glp_get_col_prim(lp, i + 1);
 		P->opt = P->z[P->R.ncol - 1];
 
-		for (b = 0; b < B->nb; b++)
-			added += separate_block(g, B, b, P->z, P->opt,
-						&cuts, &cutb, &ncuts, &cap);
+		added = separate(g, P->z, P->opt, &cuts, &ncuts, &cap);
 		if (!added) {
 			P->converged = 1;
 			break;
 		}
 		for (i = before; i < ncuts; i++) {
-			add_cut_row(&P->R, g, B, cutb[i], cuts + (size_t)i * g->n);
+			add_cut_row(&P->R, g, cuts + (size_t)i * g->n);
 			glp_push_row(lp, &P->R, P->R.n - 1);
 		}
 	}
@@ -1299,7 +1237,6 @@ done:
 	P->rounds = round > MAX_ROUNDS ? MAX_ROUNDS : round;
 	glp_delete_prob(lp);
 	free(cuts);
-	free(cutb);
 }
 
 /* ------------------------------------------------------- exact linear algebra */
@@ -1632,14 +1569,16 @@ static int exact_rows_ok(const Rows *R, mpq_t *z)
  *
  *     2 (C|S| - X(E_B[S])) = sum_{v in S} (2C - D_v(X)) + X(dS)  >=  2C
  *
- * has to hold for every proper nonempty S of every 2-connected block.
+ * has to hold for every proper nonempty S of vertices.
  */
-static int exact_separate_ok(const Graph *g, const Blocks *B, mpq_t *z)
+static int exact_separate_ok(const Graph *g, mpq_t *z)
 {
-	int m = g->m, n = g->n, b, i, k, ok = 1;
+	int m = g->m, n = g->n, i, k, s = n, snk = n + 1, ok = 1;
 	mpz_t D, C, twoC, big, neg, flow, t0;
 	mpz_t *X = xmalloc((size_t)(m + 1) * sizeof *X);
-	int *loc = xmalloc((size_t)n * sizeof *loc);
+	mpz_t *w = xmalloc((size_t)n * sizeof *w);
+	int *q = xmalloc((size_t)(n + 2) * sizeof *q);
+	ZNet N;
 
 	mpz_init_set_ui(D, 1);
 	for (i = 0; i <= m; i++) {
@@ -1659,54 +1598,39 @@ static int exact_separate_ok(const Graph *g, const Blocks *B, mpq_t *z)
 	mpz_init(flow);
 	mpz_init(t0);
 
-	for (b = 0; b < B->nb && ok; b++) {
-		int nloc = B->vstart[b + 1] - B->vstart[b];
-		int nbe = B->bstart[b + 1] - B->bstart[b];
-		int s = nloc, snk = nloc + 1;
-		mpz_t *w;
-		int *q;
-		ZNet N;
+	for (i = 0; i < n; i++) {
+		mpz_init(w[i]);
+		mpz_set(w[i], twoC);
+	}
+	mpz_set_ui(big, 1);
+	for (i = 0; i < m; i++) {
+		mpz_sub(w[g->eu[i]], w[g->eu[i]], X[i]);
+		mpz_sub(w[g->ev[i]], w[g->ev[i]], X[i]);
+		mpz_abs(t0, X[i]);
+		mpz_addmul_ui(big, t0, 2);
+	}
+	mpz_set_ui(neg, 0);
+	for (i = 0; i < n; i++) {
+		mpz_abs(t0, w[i]);
+		mpz_add(big, big, t0);
+		if (mpz_sgn(w[i]) < 0)
+			mpz_add(neg, neg, t0);
+	}
+	mpz_add(big, big, twoC);
 
-		if (nloc < 3)
-			continue;
-		w = xmalloc((size_t)nloc * sizeof *w);
-		q = xmalloc((size_t)(nloc + 2) * sizeof *q);
-		for (i = 0; i < nloc; i++) {
-			mpz_init(w[i]);
-			mpz_set(w[i], twoC);
-			loc[B->bvert[B->vstart[b] + i]] = i;
-		}
-		mpz_set_ui(big, 1);
-		for (i = 0; i < nbe; i++) {
-			int e = B->bedge[B->bstart[b] + i];
-			mpz_sub(w[loc[g->eu[e]]], w[loc[g->eu[e]]], X[e]);
-			mpz_sub(w[loc[g->ev[e]]], w[loc[g->ev[e]]], X[e]);
-			mpz_abs(t0, X[e]);
-			mpz_addmul_ui(big, t0, 2);
-		}
-		mpz_set_ui(neg, 0);
-		for (i = 0; i < nloc; i++) {
-			mpz_abs(t0, w[i]);
-			mpz_add(big, big, t0);
-			if (mpz_sgn(w[i]) < 0)
-				mpz_add(neg, neg, t0);
-		}
-		mpz_add(big, big, twoC);
-
-		znet_init(&N, nloc + 2, nbe + 2 * nloc + 4);
-		for (k = 0; k < 2 * (nloc - 1) && ok; k++) {
+	if (n >= 3) {
+		znet_init(&N, n + 2, m + 2 * n + 4);
+		for (k = 0; k < 2 * (n - 1) && ok; k++) {
 			int u = 1 + k / 2;
 			int in_ = (k % 2 == 0) ? 0 : u;
 			int out_ = (k % 2 == 0) ? u : 0;
 
 			znet_reset(&N);
-			for (i = 0; i < nbe; i++) {
-				int e = B->bedge[B->bstart[b] + i];
-				if (mpz_sgn(X[e]) > 0)
-					znet_arc(&N, loc[g->eu[e]], loc[g->ev[e]], X[e], X[e]);
-			}
+			for (i = 0; i < m; i++)
+				if (mpz_sgn(X[i]) > 0)
+					znet_arc(&N, g->eu[i], g->ev[i], X[i], X[i]);
 			mpz_set_ui(t0, 0);
-			for (i = 0; i < nloc; i++) {
+			for (i = 0; i < n; i++) {
 				if (mpz_sgn(w[i]) < 0) {
 					mpz_neg(t0, w[i]);
 					znet_arc(&N, s, i, t0, t0);
@@ -1727,16 +1651,15 @@ static int exact_separate_ok(const Graph *g, const Blocks *B, mpq_t *z)
 				ok = 0;
 		}
 		znet_free(&N);
-		for (i = 0; i < nloc; i++)
-			mpz_clear(w[i]);
-		free(w);
-		free(q);
 	}
 
+	for (i = 0; i < n; i++)
+		mpz_clear(w[i]);
+	free(w);
+	free(q);
 	for (i = 0; i <= m; i++)
 		mpz_clear(X[i]);
 	free(X);
-	free(loc);
 	mpz_clear(D); mpz_clear(C); mpz_clear(twoC); mpz_clear(big);
 	mpz_clear(neg); mpz_clear(flow); mpz_clear(t0);
 	return ok;
@@ -1748,7 +1671,7 @@ static int exact_separate_ok(const Graph *g, const Blocks *B, mpq_t *z)
  * Since y is supported on the selected rows, A_sel^T y = c already says A^T y = c.
  * For any feasible x it follows that t = c.x = y.(A_sel x) <= y.b_sel, and that is the bound.
  */
-static void certify(Cert *C, const Graph *g, const Blocks *B, const Program *P)
+static void certify(Cert *C, const Graph *g, const Program *P)
 {
 	int ncol = P->R.ncol, i, j;
 	int *sel = xmalloc((size_t)ncol * sizeof *sel);
@@ -1769,7 +1692,7 @@ static void certify(Cert *C, const Graph *g, const Blocks *B, const Program *P)
 	}
 
 	if (exact_solve(ncol, A, bb, C->z)) {
-		if (exact_rows_ok(&P->R, C->z) && exact_separate_ok(g, B, C->z)) {
+		if (exact_rows_ok(&P->R, C->z) && exact_separate_ok(g, C->z)) {
 			C->primal = 1;
 			mpq_set(C->lb, C->z[ncol - 1]);
 		}
@@ -1934,10 +1857,72 @@ static void emit_witness_exact(FILE *f, const Graph *g, mpq_t *z)
 	mpq_clear(half); mpq_clear(one); mpq_clear(p);
 }
 
+/*
+ * Answer a graph that is not 2-connected, by the lemma at the head of this file: it is RN exactly when it is a path.
+ * On a path every edge is a bridge, so P(G) = {1} and the witness is x = 1: the degrees are 2 at the internal vertices and 1 at the ends.
+ * The RP program would then report t = min(1, 2 - max_v d_v), which is 1 for n <= 2 and 0 beyond, and the RN program t = 1.
+ * Nothing else here is RN, and the certificate for that is the cut vertex itself.
+ */
+static void emit_shortcut(FILE *f, const Graph *g, int cut, const Opts *o)
+{
+	int n = g->n, m = g->m, i, path = is_path(g), rp = path && n <= 2;
+	const char *cls = !path ? "not RN" : (rp ? "RP" : "SRN");
+
+	fputs(",\"two_connected\":false,\"shortcut\":", f);
+	jsquote(f, path ? "path" : "cut-vertex");
+	if (!path && cut >= 0) {
+		fputs(",\"cut_vertex\":", f);
+		emit_vertex(f, g, cut);
+	}
+	fputs(",\"class\":", f);
+	jsquote(f, cls);
+	fprintf(f, ",\"rn\":%s,\"rp\":%s,\"srn\":%s",
+		path ? "true" : "false", rp ? "true" : "false",
+		(path && !rp) ? "true" : "false");
+	fprintf(f, ",\"delta\":%d,\"lambda\":%d", rp ? 1 : 0, (path && !rp) ? 1 : 0);
+	fputs(",\"rank_cuts\":0,\"rounds\":0", f);
+
+	if (o->exact) {
+		fputs(",\"exact\":{\"status\":\"certified\"", f);
+		if (path) {
+			/* Whichever of the two programs settles the class, its optimum here is 1. */
+			fputs(",\"bound_lower\":\"1\",\"bound_upper\":\"1\",\"optimum\":\"1\"", f);
+			if (o->witness) {
+				mpq_t *z = xmalloc((size_t)(m + 1) * sizeof *z);
+				for (i = 0; i <= m; i++) {
+					mpq_init(z[i]);
+					mpq_set_ui(z[i], 1, 1);
+				}
+				fputs(",\"witness\":", f);
+				emit_witness_exact(f, g, z);
+				for (i = 0; i <= m; i++)
+					mpq_clear(z[i]);
+				free(z);
+			}
+		} else {
+			fputs(",\"reason\":", f);
+			jsquote(f, "a cut vertex, and G is not a path: see the lemma at the head of rn.c");
+		}
+		fputs("}", f);
+	}
+
+	if (o->witness) {
+		fputs(",\"witness\":", f);
+		if (path) {
+			double *x = xmalloc((size_t)(m + 1) * sizeof *x);
+			for (i = 0; i <= m; i++)
+				x[i] = 1.0;
+			emit_witness(f, g, x, 1);
+			free(x);
+		} else {
+			fputs("null", f);
+		}
+	}
+}
+
 static void run_one(FILE *f, Graph *g, const Opts *o)
 {
-	int n = g->n, m = g->m, i, v, bridges = 0;
-	Blocks B;
+	int n = g->n, m = g->m, i, v, cut;
 	Program rpP, rnP;
 	Cert rpC, rnC;
 	int rp_v, rn_v = 0, rp = 0, rn = 0, ranrn = 0, cert_ok = 1, theta_empty = 0;
@@ -1985,15 +1970,21 @@ static void run_one(FILE *f, Graph *g, const Opts *o)
 	}
 	fputs(",\"connected\":true", f);
 
-	blocks_find(g, &B);
-	for (i = 0; i < B.nb; i++)
-		if (B.vstart[i + 1] - B.vstart[i] < 3)
-			bridges++;
-	fprintf(f, ",\"blocks\":%d,\"bridges\":%d", B.nb, bridges);
+	/* By the lemma at the head of this file a graph that is not 2-connected needs no program at all. */
+	if (!two_connected(g, &cut)) {
+		emit_shortcut(f, g, cut, o);
+		clock_gettime(CLOCK_MONOTONIC, &ts);
+		t1 = ts.tv_sec + 1e-9 * ts.tv_nsec;
+		fputs(",\"seconds\":", f);
+		fprintf(f, "%.6f", t1 - t0);
+		fputs("}", f);
+		return;
+	}
+	fputs(",\"two_connected\":true,\"shortcut\":null", f);
 
-	program_solve(&rpP, g, &B, 1, o->exact);
+	program_solve(&rpP, g, 1, o->exact);
 	if (o->exact && rpP.st == 0)
-		certify(&rpC, g, &B, &rpP);
+		certify(&rpC, g, &rpP);
 	else
 		cert_init(&rpC, rpP.R.ncol);
 	rp_v = verdict(&rpP, &rpC, o->exact);
@@ -2012,9 +2003,9 @@ static void run_one(FILE *f, Graph *g, const Opts *o)
 
 	if (!rp && !theta_empty) {
 		ranrn = 1;
-		program_solve(&rnP, g, &B, 0, o->exact);
+		program_solve(&rnP, g, 0, o->exact);
 		if (o->exact && rnP.st == 0)
-			certify(&rnC, g, &B, &rnP);
+			certify(&rnC, g, &rnP);
 		else
 			cert_init(&rnC, rnP.R.ncol);
 		rn_v = verdict(&rnP, &rnC, o->exact);
@@ -2074,7 +2065,6 @@ static void run_one(FILE *f, Graph *g, const Opts *o)
 	cert_free(&rpC);
 	program_free(&rpP);
 	if (ranrn) { cert_free(&rnC); program_free(&rnP); }
-	blocks_free(&B);
 }
 
 /* ---------------------------------------------------------------------- main */
