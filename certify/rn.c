@@ -32,17 +32,22 @@
  *   Conversely P_n is RN at x = 1, and RP exactly when n <= 2.  []
  *
  * A path is therefore answered outright, and so is every other graph with a cut vertex, which leaves the program only 2-connected graphs.
- * A second counting bound settles more of them for nothing.
+ * A counting bound over vertex cuts settles more of them for nothing.
  *
- *   Lemma.  Let G be bipartite with parts A, B, |A| <= |B|.  If |B| = |A| + 1 then G is not RP, and if |B| >= |A| + 2 then G is not RN.
+ *   Lemma.  Let S be a nonempty proper set of vertices and c the number of components of G - S.  Then
+ *       max_{v in S} d_v(x) >= 1 + (c - 1)/|S|   for every x in P(G).
+ *   So c >= |S| + 1 makes G not RP, and c >= |S| + 2 makes G not RN.
  *
- *   Proof.  Every edge has exactly one end in A, so for x in P(G)
- *       sum_{v in A} d_v(x) = x(E) = n - 1,
- *   whence max_{v in A} d_v(x) >= (n-1)/|A| = (|A| + |B| - 1)/|A|.
- *   That is >= 2 when |B| >= |A| + 1 and > 2 when |B| >= |A| + 2.  []
+ *   Proof.  Write C_1, ..., C_c for the components of G - S.  Every edge lies inside S, inside one C_i, or across, so
+ *       sum_{v in S} d_v(x) = 2 x(E[S]) + x(dS) = x(E[S]) + (n - 1 - sum_i x(E[C_i]))
+ *   using x(E) = n - 1.  The rank inequalities give x(E[C_i]) <= |C_i| - 1 and x >= 0 gives x(E[S]) >= 0, so
+ *       sum_{v in S} d_v(x) >= (n - 1) - (n - |S| - c) = |S| + c - 1,
+ *   and the claim follows by averaging over S.  []
  *
- * The parts of a bipartite graph differ in parity with n, so the first case is the odd orders and the second the even ones.
- * A gap of two or more is thus answered outright as well, and a gap of one skips the RP program and runs only the RN one, which is where the saving is: the bipartite graphs that are RN are exactly the ones that used to pay for both programs.
+ * Both halves are known, and the certifier only needs the cut that witnesses them: the RP half is the 1-toughness of resistance positive graphs (devriendt2025, by the toughness argument of chvatal1973), and the RN half is the sharpening in (garcia2026tough).
+ * Taking S to be a vertex cover, where every C_i is a single vertex, gives the bipartite corner: either part of a bipartite graph has c = n - |S|, so parts differing by one rule out RP and parts differing by two or more rule out RN.
+ * The worst cut is NP-hard to find, but any cut is a certificate on its own, so the search below is a fixed, deterministic list of candidates: it is sound wherever it fires and costs one sweep where it does not.
+ * A cut with c >= |S| + 2 therefore answers the graph outright, and one with c = |S| + 1 skips the RP program and runs only the RN one, which is where the saving is: the graphs that are RN but not RP are exactly the ones that would otherwise pay for both programs.
  * There P(G) carries the one equality x(E) = n - 1 and no implicit one, so there the relative interior really is the strict system.
  * That leaves one program with integer data, and integer data is what makes exact rational arithmetic practical:
  *
@@ -759,9 +764,9 @@ static int two_connected(const Graph *g, int *cut)
 /*
  * Two-colour the connected graph G.
  * Return 1 and set *small to the size of the smaller part, or 0 when G has an odd cycle.
- * See the second lemma at the head of the file for what the parts are good for.
+ * When out is not NULL it receives the colouring, since both parts are candidate cuts for the second lemma at the head of the file.
  */
-static int bipartition(const Graph *g, int *small)
+static int bipartition(const Graph *g, int *small, unsigned char *out)
 {
 	int n = g->n, m = g->m, i, top = 0, black = 0, ok = 1;
 	int *head, *nxt, *to, *col, *stk;
@@ -799,6 +804,9 @@ static int bipartition(const Graph *g, int *small)
 		for (i = 0; i < n; i++)
 			black += (col[i] == 1);
 		*small = black < n - black ? black : n - black;
+		if (out)
+			for (i = 0; i < n; i++)
+				out[i] = (unsigned char)(col[i] == 1);
 	}
 	free(head); free(nxt); free(to); free(col); free(stk);
 	return ok;
@@ -821,6 +829,148 @@ static int is_path(const Graph *g)
 			ok = 0;
 	free(deg);
 	return ok;
+}
+
+/*
+ * The hunt for a cut certificate, by the second lemma at the head of the file.
+ * A candidate S is scored by (c - 1)/|S|, compared as a fraction so that the arithmetic stays integral, and ties go to the smaller S.
+ * The candidates are, in this order and with no randomness anywhere, so that the route a graph takes is reproducible:
+ *     both colour classes, when G is bipartite;
+ *     the complement of a greedy maximal independent set, taking the vertices by ascending and then by descending degree;
+ *     N(v), for every vertex v, which leaves v a component of its own.
+ * The first family is exactly the bipartite bound, and the others reach graphs with odd cycles that it cannot see.
+ */
+typedef struct {
+	const Graph *g;
+	const int *head, *nxt, *to;
+	unsigned char *seen;
+	int *stack;
+	unsigned char *best;
+	int bsize, bcomp;
+} CutHunt;
+
+/* Count the components of G - S, with S given as vertex flags. */
+static int cut_components(const Graph *g, const int *head, const int *nxt, const int *to,
+			  const unsigned char *inS, unsigned char *seen, int *stack)
+{
+	int n = g->n, v, c = 0;
+	memset(seen, 0, (size_t)n);
+	for (v = 0; v < n; v++) {
+		int top = 0;
+		if (inS[v] || seen[v])
+			continue;
+		c++;
+		seen[v] = 1;
+		stack[top++] = v;
+		while (top) {
+			int u = stack[--top], a;
+			for (a = head[u]; a >= 0; a = nxt[a]) {
+				int w = to[a];
+				if (!inS[w] && !seen[w]) {
+					seen[w] = 1;
+					stack[top++] = w;
+				}
+			}
+		}
+	}
+	return c;
+}
+
+static void cut_offer(CutHunt *H, const unsigned char *cand)
+{
+	int n = H->g->n, i, sz = 0, c;
+	long lhs, rhs;
+
+	for (i = 0; i < n; i++)
+		sz += cand[i];
+	if (sz == 0 || sz == n)
+		return;
+	c = cut_components(H->g, H->head, H->nxt, H->to, cand, H->seen, H->stack);
+	lhs = (long)(c - 1) * H->bsize;
+	rhs = (long)(H->bcomp - 1) * sz;
+	if (H->bsize == 0 || lhs > rhs || (lhs == rhs && sz < H->bsize)) {
+		memcpy(H->best, cand, (size_t)n);
+		H->bsize = sz;
+		H->bcomp = c;
+	}
+}
+
+/* Write the best candidate to best[], its size to *bsize and its component count to *bcomp.  *bsize is 0 when there is no candidate at all. */
+static void cut_search(const Graph *g, int bip, const unsigned char *col,
+		       unsigned char *best, int *bsize, int *bcomp)
+{
+	int n = g->n, m = g->m, i, j, v, a, pass;
+	int *head, *nxt, *to, *deg, *ord, *stack;
+	unsigned char *cand, *seen, *banned;
+	CutHunt H;
+
+	*bsize = 0;
+	*bcomp = 0;
+	memset(best, 0, (size_t)n);
+	if (n < 3)
+		return;
+
+	head = xmalloc((size_t)n * sizeof *head);
+	nxt = xmalloc((size_t)m * 2 * sizeof *nxt);
+	to = xmalloc((size_t)m * 2 * sizeof *to);
+	for (i = 0; i < n; i++)
+		head[i] = -1;
+	for (i = 0; i < m; i++) {
+		to[2 * i] = g->ev[i]; nxt[2 * i] = head[g->eu[i]]; head[g->eu[i]] = 2 * i;
+		to[2 * i + 1] = g->eu[i]; nxt[2 * i + 1] = head[g->ev[i]]; head[g->ev[i]] = 2 * i + 1;
+	}
+	deg = xcalloc((size_t)n, sizeof *deg);
+	for (i = 0; i < m; i++) {
+		deg[g->eu[i]]++;
+		deg[g->ev[i]]++;
+	}
+	ord = xmalloc((size_t)n * sizeof *ord);
+	for (i = 0; i < n; i++) {		/* by ascending degree, insertion sort: n is small */
+		int key = i;
+		for (j = i; j > 0 && deg[ord[j - 1]] > deg[key]; j--)
+			ord[j] = ord[j - 1];
+		ord[j] = key;
+	}
+	cand = xmalloc((size_t)n);
+	seen = xmalloc((size_t)n);
+	banned = xmalloc((size_t)n);
+	stack = xmalloc((size_t)n * sizeof *stack);
+
+	H.g = g; H.head = head; H.nxt = nxt; H.to = to;
+	H.seen = seen; H.stack = stack; H.best = best;
+	H.bsize = 0; H.bcomp = 0;
+
+	if (bip) {
+		for (i = 0; i < n; i++) cand[i] = !col[i];
+		cut_offer(&H, cand);
+		for (i = 0; i < n; i++) cand[i] = col[i];
+		cut_offer(&H, cand);
+	}
+	for (pass = 0; pass < 2; pass++) {
+		memset(banned, 0, (size_t)n);
+		memset(cand, 1, (size_t)n);
+		for (i = 0; i < n; i++) {
+			v = pass ? ord[n - 1 - i] : ord[i];
+			if (banned[v])
+				continue;
+			cand[v] = 0;		/* v joins the independent set, so it leaves S */
+			banned[v] = 1;
+			for (a = head[v]; a >= 0; a = nxt[a])
+				banned[to[a]] = 1;
+		}
+		cut_offer(&H, cand);
+	}
+	for (v = 0; v < n; v++) {
+		memset(cand, 0, (size_t)n);
+		for (a = head[v]; a >= 0; a = nxt[a])
+			cand[to[a]] = 1;
+		cut_offer(&H, cand);
+	}
+
+	*bsize = H.bsize;
+	*bcomp = H.bcomp;
+	free(head); free(nxt); free(to); free(deg); free(ord);
+	free(cand); free(seen); free(banned); free(stack);
 }
 
 /* ------------------------------------------------------------- the row store */
@@ -1979,24 +2129,38 @@ static void emit_shortcut(FILE *f, const Graph *g, int cut, const Opts *o)
 	}
 }
 
-/*
- * Answer a bipartite graph whose parts differ by two or more, by the second lemma at the head of this file.
- * The certificate is the smaller part: max_{v in A} d_v(x) >= (n-1)/|A| > 2 holds on all of P(G), so no point of it has every degree at most 2.
- */
-static void emit_bipartite_gap(FILE *f, const Graph *g, int small, const Opts *o)
+/* The cut certificate itself, which a reader can check by hand. */
+static void emit_cut(FILE *f, const Graph *g, const unsigned char *S, int size, int comps)
 {
-	fputs(",\"two_connected\":true,\"shortcut\":\"bipartite-gap\""
-	      ",\"class\":\"not RN\",\"rn\":false,\"rp\":false,\"srn\":false"
+	int v, first = 1;
+	fputs(",\"cut_set\":[", f);
+	for (v = 0; v < g->n; v++)
+		if (S[v]) {
+			if (!first) fputs(",", f);
+			first = 0;
+			emit_vertex(f, g, v);
+		}
+	fprintf(f, "],\"cut_size\":%d,\"cut_components\":%d", size, comps);
+}
+
+/*
+ * Answer a graph carrying a cut with c >= |S| + 2, by the second lemma at the head of this file.
+ * There max_{v in S} d_v(x) >= 1 + (c-1)/|S| > 2 on all of P(G), so no point of it has every degree at most 2.
+ */
+static void emit_cut_gap(FILE *f, const Graph *g, const unsigned char *S, int size,
+			 int comps, const Opts *o)
+{
+	fputs(",\"two_connected\":true,\"shortcut\":\"cut-gap\"", f);
+	emit_cut(f, g, S, size, comps);
+	fputs(",\"class\":\"not RN\",\"rn\":false,\"rp\":false,\"srn\":false"
 	      ",\"delta\":null,\"lambda\":null,\"rank_cuts\":0,\"rounds\":0", f);
 	if (o->exact) {
+		char buf[192];
+		snprintf(buf, sizeof buf,
+			 "a cut of %d vertices leaves %d components, so max_v d_v(x) >= 1 + %d/%d > 2 on all of P(G)",
+			 size, comps, comps - 1, size);
 		fputs(",\"exact\":{\"status\":\"certified\",\"reason\":", f);
-		{
-			char buf[160];
-			snprintf(buf, sizeof buf,
-				 "bipartite with parts %d and %d, so max_v d_v(x) >= %d/%d > 2 on all of P(G)",
-				 small, g->n - small, g->n - 1, small);
-			jsquote(f, buf);
-		}
+		jsquote(f, buf);
 		fputs("}", f);
 	}
 	if (o->witness)
@@ -2005,7 +2169,9 @@ static void emit_bipartite_gap(FILE *f, const Graph *g, int small, const Opts *o
 
 static void run_one(FILE *f, Graph *g, const Opts *o)
 {
-	int n = g->n, m = g->m, i, v, cut, bip, small, gap = 0, skip_rp = 0;
+	int n = g->n, m = g->m, i, v, cut, bip, small, skip_rp = 0;
+	int csize = 0, ccomp = 0;
+	unsigned char *col = NULL, *cutS = NULL;
 	Program rpP, rnP;
 	Cert rpC, rnC;
 	int rp_v, rn_v = 0, rp = 0, rn = 0, ranrn = 0, cert_ok = 1, theta_empty = 0;
@@ -2053,7 +2219,9 @@ static void run_one(FILE *f, Graph *g, const Opts *o)
 	}
 	fputs(",\"connected\":true", f);
 
-	bip = bipartition(g, &small);
+	col = xmalloc((size_t)n);
+	cutS = xmalloc((size_t)n);
+	bip = bipartition(g, &small, col);
 	fprintf(f, ",\"bipartite\":%s", bip ? "true" : "false");
 	if (bip)
 		fprintf(f, ",\"parts\":[%d,%d]", small, n - small);
@@ -2066,28 +2234,32 @@ static void run_one(FILE *f, Graph *g, const Opts *o)
 		fputs(",\"seconds\":", f);
 		fprintf(f, "%.6f", t1 - t0);
 		fputs("}", f);
+		free(col); free(cutS);
 		return;
 	}
-	/* And by the second, a bipartite graph whose parts differ by two or more is not RN, while a gap of one rules out RP and leaves only the RN program to run. */
-	gap = bip ? (n - small) - small : 0;
-	if (gap >= 2) {
-		emit_bipartite_gap(f, g, small, o);
+	/* And by the second, a cut leaving |S| + 2 components or more says not RN outright, while one leaving exactly |S| + 1 rules out RP and leaves only the RN program to run. */
+	cut_search(g, bip, col, cutS, &csize, &ccomp);
+	if (ccomp >= csize + 2) {
+		emit_cut_gap(f, g, cutS, csize, ccomp, o);
 		clock_gettime(CLOCK_MONOTONIC, &ts);
 		t1 = ts.tv_sec + 1e-9 * ts.tv_nsec;
 		fputs(",\"seconds\":", f);
 		fprintf(f, "%.6f", t1 - t0);
 		fputs("}", f);
+		free(col); free(cutS);
 		return;
 	}
-	skip_rp = (gap == 1);
+	skip_rp = (ccomp == csize + 1);
 	fputs(",\"two_connected\":true,\"shortcut\":", f);
 	if (skip_rp)
-		jsquote(f, "bipartite-unbalanced");
+		jsquote(f, "cut-tight");
 	else
 		fputs("null", f);
+	if (skip_rp)
+		emit_cut(f, g, cutS, csize, ccomp);
 
 	if (skip_rp) {
-		/* max_{v in A} d_v(x) >= 2 throughout P(G), so the RP program would report an optimum of at most 0 and is not run. */
+		/* max_{v in S} d_v(x) >= 2 throughout P(G), so the RP program would report an optimum of at most 0 and is not run. */
 		memset(&rpP, 0, sizeof rpP);
 		rpP.st = -1;
 		cert_init(&rpC, m + 1);
@@ -2180,6 +2352,8 @@ static void run_one(FILE *f, Graph *g, const Opts *o)
 	cert_free(&rpC);
 	program_free(&rpP);
 	if (ranrn) { cert_free(&rnC); program_free(&rnP); }
+	free(col);
+	free(cutS);
 }
 
 /* ---------------------------------------------------------------------- main */

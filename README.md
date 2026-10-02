@@ -88,11 +88,21 @@ The certifier decides each by the linear program of (guo2026lp, Theorem 2.1),
 with s = 1 for RP and s = 0 for RN, so the property holds exactly when the optimum is positive.
 The program is only ever run on a 2-connected graph, which is this implementation's own departure from (guo2026lp) and is how the relative interior is handled.
 A connected graph that is not 2-connected is RN exactly when it is a path, by a short lemma proved at the head of `certify/rn.c`, so a graph with a cut vertex is answered structurally: a path is SRN (RP when it has at most one edge) with witness x = 1, and nothing else with a cut vertex is RN.
-A second counting bound settles more of them.
-In a bipartite graph with parts A, B and |A| <= |B|, every edge has exactly one end in A, so sum over v in A of d_v(x) equals x(E) = n - 1 for every x in P(G), and hence max_v d_v(x) >= (n-1)/|A|.
-A gap |B| - |A| >= 2 therefore puts every point of P(G) above 2 somewhere and G is not RN, again with no program at all; a gap of exactly 1 rules out RP, so only the RN program is run.
-Since the parts differ in parity with n, the first case is the even orders and the second the odd ones.
-The report names the route taken in its `shortcut` field (`path`, `cut-vertex`, `bipartite-gap`, `bipartite-unbalanced`, or `null` when the programs ran), the cut vertex in `cut_vertex`, and the part sizes in `parts`.
+A counting bound over vertex cuts settles more of them.
+For a nonempty proper set of vertices S leaving c components in G - S, the rank inequalities give
+
+```
+    max_{v in S} d_v(x) >= 1 + (c-1)/|S|        for every x in P(G),
+```
+
+so c >= |S| + 1 rules out RP and c >= |S| + 2 rules out RN, the latter with no program at all.
+Both halves are known: the RP half is the 1-toughness of resistance positive graphs (devriendt2025, by the toughness argument of chvatal1973), and the RN half is the sharpening in (garcia2026tough).
+Taking S to be either part of a bipartite graph is the special case where all the components are single vertices, so parts differing by one rule out RP and parts differing by two or more rule out RN.
+Finding the worst cut is NP-hard, but a cut is a certificate by itself, so `rn` tries a short deterministic list of candidates (both colour classes when bipartite, the complement of a greedy independent set by ascending and by descending degree, and N(v) for every v) and is sound wherever one fires.
+Counted over the 194066 two-connected graphs on 9 vertices, that list answers 8.1% of the not-RN graphs outright and rules out RP for 94.0% of the graphs that are not RP, with no false positives; those graphs are cheap ones, so the runtime it saves on such an ensemble is only about 0.2%.
+It pays on larger graphs with a big independent set: K_{3,120} plus an edge in the small part, for instance, is answered instantly in place of a 0.18s program.
+
+The report names the route taken in its `shortcut` field (`path`, `cut-vertex`, `cut-gap`, `cut-tight`, or `null` when the programs ran), the cut vertex in `cut_vertex`, the witnessing cut in `cut_set`, `cut_size`, and `cut_components`, and the part sizes in `parts`.
 On what reaches the program, 2-connected graphs, P(G) carries the single equality x(E) = n - 1 and the relative interior really is the strict system above.
 The rank inequalities are separated on demand, each as a minimum cut.
 
