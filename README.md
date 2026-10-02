@@ -96,11 +96,13 @@ For a nonempty proper set of vertices S leaving c components in G - S, the rank 
 ```
 
 so c >= |S| + 1 rules out RP and c >= |S| + 2 rules out RN, the latter with no program at all.
-Both halves are known: the RP half is the 1-toughness of resistance positive graphs (devriendt2025, by the toughness argument of chvatal1973), and the RN half is the sharpening in (garcia2026tough).
+Both halves are known: the RP half is the 1-toughness of resistance positive graphs (fiedler2011, Theorem 3.4.18), and the RN half is the toughness an RN graph can attain below 1 (garcia2026srn).
 Taking S to be either part of a bipartite graph is the special case where all the components are single vertices, so parts differing by one rule out RP and parts differing by two or more rule out RN.
 Finding the worst cut is NP-hard, but a cut is a certificate by itself, so `rn` tries a short deterministic list of candidates (both colour classes when bipartite, the complement of a greedy independent set by ascending and by descending degree, and N(v) for every v) and is sound wherever one fires.
 Counted over the 194066 two-connected graphs on 9 vertices, that list answers 8.1% of the not-RN graphs outright and rules out RP for 94.0% of the graphs that are not RP, with no false positives; those graphs are cheap ones, so the runtime it saves on such an ensemble is only about 0.2%.
 It pays on larger graphs with a big independent set: K_{3,120} plus an edge in the small part, for instance, is answered instantly in place of a 0.18s program.
+The `cut-tight` route catches every SRN graph: (garcia2026srn) shows that a 2-connected strictly RN graph is bipartite with parts differing by one, so its smaller part is such a cut.
+That classification also implies that a 1-tough RN graph is RP, which would let the RN program be skipped in place of the RP one; `rn` does not do that, since the RN program only runs when the RP optimum is exactly 0, which happens on 47 of the 261080 connected graphs on 9 vertices.
 
 The report names the route taken in its `shortcut` field (`path`, `cut-vertex`, `cut-gap`, `cut-tight`, or `null` when the programs ran), the cut vertex in `cut_vertex`, the witnessing cut in `cut_set`, `cut_size`, and `cut_components`, and the part sizes in `parts`.
 On what reaches the program, 2-connected graphs, P(G) carries the single equality x(E) = n - 1 and the relative interior really is the strict system above.

@@ -26,7 +26,7 @@ with s = 1 for RP and s = 0 for RN, so the property holds exactly when the optim
 The program is only ever run on a 2-connected graph, which is `rn`'s own departure from (guo2026lp) and is described in the source of `certify/rn.c`: a connected graph that is not 2-connected is RN exactly when it is a path, so those graphs are answered structurally and the relative interior of P(G) is the strict system on everything that reaches the program.
 A counting bound over vertex cuts then shortens the rest.
 For a nonempty proper set of vertices S leaving c components in G - S, the rank inequalities give max_{v in S} d_v(x) >= 1 + (c-1)/|S| for every x in P(G), so c >= |S| + 1 rules out RP and c >= |S| + 2 rules out RN with no program at all.
-The RP half is the 1-toughness of RP graphs (devriendt2025, chvatal1973) and the RN half is (garcia2026tough); `rn` hunts for the witnessing cut over a short deterministic candidate list.
+The RP half is the 1-toughness of RP graphs (fiedler2011, Theorem 3.4.18) and the RN half is the toughness an RN graph can attain below 1 (garcia2026srn); `rn` hunts for the witnessing cut over a short deterministic candidate list.
 The report names the route in `shortcut`, the cut in `cut_set`, `cut_size`, and `cut_components`, and the parts in `parts`.
 The certifier separates the rank inequalities on demand, each as a minimum cut.
 Under `--exact` it then re-solves the rows tight at the floating point optimum in rational arithmetic, both forwards for the vertex and transposed for the dual.

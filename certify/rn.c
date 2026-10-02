@@ -44,10 +44,12 @@
  *       sum_{v in S} d_v(x) >= (n - 1) - (n - |S| - c) = |S| + c - 1,
  *   and the claim follows by averaging over S.  []
  *
- * Both halves are known, and the certifier only needs the cut that witnesses them: the RP half is the 1-toughness of resistance positive graphs (devriendt2025, by the toughness argument of chvatal1973), and the RN half is the sharpening in (garcia2026tough).
+ * Both halves are known, and the certifier only needs the cut that witnesses them: the RP half is the 1-toughness of resistance positive graphs (fiedler2011, Theorem 3.4.18), and the RN half is the toughness an RN graph can attain below 1 (garcia2026srn).
  * Taking S to be a vertex cover, where every C_i is a single vertex, gives the bipartite corner: either part of a bipartite graph has c = n - |S|, so parts differing by one rule out RP and parts differing by two or more rule out RN.
  * The worst cut is NP-hard to find, but any cut is a certificate on its own, so the search below is a fixed, deterministic list of candidates: it is sound wherever it fires and costs one sweep where it does not.
  * A cut with c >= |S| + 2 therefore answers the graph outright, and one with c = |S| + 1 skips the RP program and runs only the RN one, which is where the saving is: the graphs that are RN but not RP are exactly the ones that would otherwise pay for both programs.
+ * That route catches every one of them.  (garcia2026srn) classifies the strictly RN graphs: a 2-connected one is bipartite with parts differing by one, so its smaller part is a cut with c = |S| + 1, and no candidate can score above 2 on a graph that is RN.
+ * The same classification would let the RN program be skipped in place of the RP one, since a 1-tough RN graph is RP, but that is not done here: the RN program only ever runs when the RP optimum is exactly 0, which happens on 47 of the 261080 connected graphs on 9 vertices, so there is nothing to save.
  * There P(G) carries the one equality x(E) = n - 1 and no implicit one, so there the relative interior really is the strict system.
  * That leaves one program with integer data, and integer data is what makes exact rational arithmetic practical:
  *
