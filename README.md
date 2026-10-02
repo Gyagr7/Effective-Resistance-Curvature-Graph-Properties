@@ -1,27 +1,42 @@
 # Code for "On Some Structural Properties of Graphs with Non-Negative Resistance Curvature"
 
-This repository contains the code used to check the RN/RP status,
-sprawling property, and toughness of graphs discussed in the paper:
+This repository contains the code used to check the RN/RP status, sprawling property, and toughness of graphs discussed in the paper:
 
-> G. Agrahari, C. Bibby, S. Boros, H. Garcia, F. Heiderscheidt, Z. Wang.
-> *On some structural properties of graphs with non-negative resistance
-> curvature.* [arXiv link / venue, once available]
+> G. Agrahari, C. Bibby, S. Boros, H. J. Garcia, F. Heidercheidt, Z. Wang.
+> *On some structural properties of graphs with non-negative resistance curvature.*
+> arXiv:2607.13169, <https://doi.org/10.48550/arXiv.2607.13169>
+
+Citation keys below are those of `references.bib`.
+
+## AI disclosure
+
+Claude Opus 5 (Anthropic) wrote `certify/rn.c` in its entirety, including the formulation of the linear program, the block decomposition, the separation routine, the exact rational certification, the I/O, and the comments.
+It also drafted parts of the prose and the docstrings elsewhere in this repository, and the current form of `resistance.py`.
+Hailey Jay Garcia directed and supervised that work, reviewed the result, and is responsible for the mathematics it rests on and for the answers it reports.
+The mathematical content of the paper is the authors' own.
 
 ## Contents
 
 | File | Purpose |
 |---|---|
-| `resistance.py` | Decide whether a graph is resistance nonnegative (RN) or resistance positive (RP) (Theorem 1), via a cutting-plane LP over the spanning tree polytope. |
-| `sprawling.py` | Decide whether a graph is *sprawling* (Section 5), a sufficient condition for RN (Theorem 8); every "sprawling" verdict comes with an explicit, independently re-verified witness collection. |
+| `certify/rn.c` | The certifier: decide RN, RP, or SRN by linear programming over the spanning tree polytope, with optional exact rational certification of the answer. Written in C against GLPK and GMP. |
+| `resistance.py` | Python wrapper around `certify/rn`. Serialize a graph, run the certifier, and read the verdict and witness back under the graph's own labels. |
+| `sprawling.py` | Decide whether a graph is *sprawling* (Section 5), a sufficient condition for RN (Theorem 8). Every "sprawling" verdict comes with an explicit, independently re-verified witness collection. |
 | `toughness.py` | Compute exact (vertex) toughness and check 1-toughness, by brute force. |
 | `examples.py` | Graph constructions referenced in the paper (Petersen graph, grid graphs, the `G_t(s_1,...,s_t)` family from Theorem 4, etc.). |
-| `verify_figure2_examples.py` | Runs all three checkers against every example graph in Figure 1 (the paper's main examples figure), labeled by panel letter, with real captured output baked into the file so a reviewer can read the results without running anything. |
+| `verify_figure2_examples.py` | Run all three checkers against every example graph in Figure 1 (the paper's main examples figure), labeled by panel letter. |
+| `references.bib` | The bibliography cited by key from the source files. |
 
 ## Installation
 
 ```bash
 pip install -r requirements.txt
+make -C certify
 ```
+
+The build needs GLPK and GMP, packaged as `glpk` and `gmp` on Arch and as `libglpk-dev` and `libgmp-dev` on Debian.
+`resistance.py` runs that build itself on first use, if the binary is missing and a compiler is available.
+Set the environment variable `RN_BIN` to use a binary from elsewhere.
 
 ## Usage
 
@@ -33,12 +48,14 @@ G = nx.petersen_graph()
 
 # RN / RP decision (Theorem 1)
 rp, rn, t_star, x = resistance.resistance_positive_decision(G, verbose=False)
-# t_star is the closed-polytope value t* = min_x max_v x(E(v)) for
-# 2-connected G; it is None for the tree / not-2-connected structural
-# pre-check cases (see below), which decide RN/RP without an LP at all.
-# rn = (t_star <= 2 + tol_rp), rp = (t_star < 2 - tol_rp) when t_star is used
+# x is the witness point in the spanning tree polytope, keyed by edge.
+# t_star is max_v d_v(x) at that witness, and is None when G is not RN.
+# Pass exact=False to accept the floating point verdict without a certificate.
 
-# Sprawling decision (Section 5) -- takes an adjacency-dict graph
+# The certifier's full report, including the exact certificate
+report = resistance.rn_report(G)
+
+# Sprawling decision (Section 5), which takes an adjacency-dict graph
 is_sprawl, info = sprawling.is_sprawling(sprawling.from_networkx(G))
 # info is the explicit witness collection S if is_sprawl=True,
 # or the specific failing condition/set if False
@@ -50,101 +67,84 @@ is_1_tough, witness = toughness.is_one_tough(G)
 
 ### How `resistance.py` decides RN / RP
 
-`resistance_positive_decision` follows the advisor's original
-cutting-plane LP structure for 2-connected graphs: it minimizes
-$t^* = \max_v x(E(v))$ over the closed spanning tree polytope $P(G)$ via
-a min-cut-based subtour separator (SCS solver), then classifies:
+Write P(G) for the spanning tree polytope, P(G)^o for its relative interior, and d_v(x) for the sum of x_e over the edges at v.
+Theorem 1 (devriendt2025, agraharietal2026) says
 
-$$\text{RN} \iff t^* \le 2 + \texttt{tol\_rp}, \qquad \text{RP} \iff t^* < 2 - \texttt{tol\_rp}$$
+```
+    G is RN  <=>  P(G)^o INTERSECT { x : d_v(x) <= 2 for all v }  !=  empty
+    G is RP  <=>  P(G)^o INTERSECT { x : d_v(x) <  2 for all v }  !=  empty
+```
 
-with a hard bipartite-imbalance certificate (`RP=False` whenever $G$ is
-bipartite with unequal parts) as an extra guard against solver noise.
-Defaults: `sep_eps=1e-15`, `tol_rp=1e-6`.
+The certifier decides each by the linear program of (guo2026lp, Theorem 2.1),
 
-Two structural cases are checked **before** the LP, because $t^*$
-cannot correctly decide RN on them at any tolerance -- not a
-solver-precision issue, but a case where $t^*$ is the wrong quantity to
-compare:
+```
+    max t   s.t.   x(E_B) = n_B - 1                (every block B)
+                   x_e >= t                        (e in a 2-connected block)
+                   x(E_B[S]) + (|S|-1) t <= |S|-1  (S a proper nonempty set of vertices of such a B)
+                   d_v(x) + s t <= 2               (every v)
+```
 
-1. **G is a tree**: $P(G)$ is a single point, decided directly from
-   G's own max degree.
-2. **G is connected but not 2-connected, and not a tree**: G is
-   provably not RN (Devriendt: the only RN graphs that are not
-   2-connected are paths). The bowtie graph (two triangles sharing a
-   hub vertex) is the case that surfaced this: it has $t^*=2$ exactly,
-   which the plain `t* <= 2 + tol` rule reads as RN=True, but the
-   bowtie is not 2-connected and not a path, so it must be RN=False.
-   $P(G)$ is lower-dimensional for such graphs (some subtour constraint
-   is a forced equality across the *whole* polytope, not just at the
-   optimum), which the closed-$t^*$ check has no way to detect.
+with s = 1 for RP and s = 0 for RN, so the property holds exactly when the optimum is positive.
+Running the program over the blocks B of G rather than over G itself is this implementation's own departure from (guo2026lp), and is what handles the relative interior when G has a cut vertex.
+The rank inequalities are separated on demand, each as a minimum cut.
 
-Each module can also be run directly (`python resistance.py`, etc.) to
-execute a few built-in sanity checks against known examples from the
-paper. `python examples.py` reproduces the key computational claims
-end-to-end, including:
+Under `exact=True`, the default, the certifier then re-solves the rows tight at the floating point optimum in rational arithmetic, forwards for the primal vertex and transposed for the dual bound.
+Those two solutions bound the optimum from each side, which certifies its sign.
+`resistance.py` raises `CertificationError` when no certificate is obtained, rather than returning an unchecked verdict.
+There are no solver tolerances to set.
+
+Each module can also be run directly (`python resistance.py`, etc.) to execute a few built-in sanity checks against known examples from the paper.
+`python examples.py` reproduces the key computational claims end-to-end, including:
 
 - the Petersen graph is RP;
 - grid graphs `P_m x P_n` are sprawling (Theorem 17);
-- the `G_5(1,1,1,1,1)` construction from Theorem 4 is 1-tough but not RN,
-  disproving Fiedler's conjecture that every 1-tough graph is RP.
+- the `G_5(1,1,1,1,1)` construction from Theorem 4 is 1-tough but not RN, disproving Fiedler's conjecture that every 1-tough graph is RP.
 
-`python verify_figure2_examples.py` checks all nine panels of Figure 1
-(the paper's main examples figure; formerly labeled "Figure 2"). Panel
-lettering, current revision: (A) bowtie, (B) K_{2,3}, (C) small
-2-hub/3-leg banana, (D) 2-hub/4-leg banana, (E) K3-hub+legs, (F)
-K4-hub+legs, (G) K5-hub+legs, (H) Petersen, (I) path family. (A
-previous figure revision included a Thomassen 34-graph panel and did
-not have panel (C); that panel no longer exists in the figure, and this
-file has been updated to match the current panel letters.)
+### Figure 1 panels
 
-All nine panels (A)-(I) match their captions exactly. Panels (C) and
-(F) went through a genuine back-and-forth before landing there: both
-are built from the same "hub(s) connected via parallel 2-vertex legs to
-a common point" family and both claim "SRN" (RN=True, RP=False). An
-earlier exact spanning-tree-enumeration cross-check flagged both as
-contradicting their captions -- but that check required every
-individual spanning tree to have positive probability, which is
-stricter than Lemma 12 actually requires (only every edge's marginal
-probability needs to be positive, not every tree). Redone with the
-correct edge-level criterion and cross-validated with two solvers, both
-panels show a genuine positive RN margin, matching their captions; see
-`verify_figure2_examples.py`'s module docstring for the full account.
+`python verify_figure2_examples.py` checks all nine panels of Figure 1 (the paper's main examples figure; formerly labeled "Figure 2").
+Panel lettering, current revision: (A) bowtie, (B) K_{2,3}, (C) small 2-hub/3-leg banana, (D) 2-hub/4-leg banana, (E) K3-hub+legs, (F) K4-hub+legs, (G) K5-hub+legs, (H) Petersen, (I) path family.
+A previous figure revision included a Thomassen 34-graph panel and did not have panel (C).
+
+Seven panels match their captions.
+**Panels (C) and (F) do not, under the current certifier.**
+Both are built from the same "hub(s) connected via parallel legs to a common point" family, and both captions claim SRN (RN=True, RP=False).
+The exact certifier in `certify/rn.c` reports both as not RN.
+Earlier floating point runs under cvxpy with the SCS solver reported a positive RN margin for both, which is where the captions come from.
+The captured output block at the bottom of `verify_figure2_examples.py` is from those earlier runs, and its summary line still claims all nine panels agree.
+Resolve this before the figure captions are taken as verified.
 
 ## Scope and caveats
 
-- `resistance.py` solves an LP via cutting planes and is numerically
-  exact up to solver tolerance; it works comfortably on graphs with
-  dozens of vertices.
-- `sprawling.py` and `toughness.py` are brute-force (they enumerate
-  Hamiltonian paths / vertex subsets respectively) and are only
-  practical for small graphs -- exactly the regime used for the
-  examples in the paper (roughly n <= 12). Both `toughness_family` and
-  `build_minimal_tough_graph` in `examples.py` build the same
-  underlying construction from Theorem 4 / Lemma 15 (a hub connected to
-  a clique via subdivided spokes) -- the former with per-branch lengths
-  and string labels, the latter with equal branch lengths and integer
-  labels -- kept as two entry points since both conventions have been
-  used across the project.
-- The verification that the Thomassen 34-graph is RP (Theorem 5) uses a
-  hand-constructed rational weighting rather than any code in this
-  repo; see the proof of Theorem 5 in the paper. (Note: the current
-  revision of Figure 1 no longer includes a Thomassen 34-graph panel.)
+- `resistance.py` is exact by default: the sign of the optimum is certified in rational arithmetic, so a returned verdict does not depend on solver precision.
+  It works comfortably on graphs with dozens of vertices.
+- `sprawling.py` and `toughness.py` are brute force, since they enumerate Hamiltonian paths and vertex subsets respectively, so they are only practical for small graphs.
+  That is the regime used for the examples in the paper, roughly n <= 12.
+- Both `toughness_family` and `build_minimal_tough_graph` in `examples.py` build the same underlying construction from Theorem 4 / Lemma 15, a hub connected to a clique via subdivided spokes.
+  The former takes per-branch lengths and uses string labels, the latter takes equal branch lengths and uses integer labels.
+  Both are kept as entry points, since both conventions have been used across the project.
+- The verification that the Thomassen 34-graph is RP (Theorem 5) uses a hand-constructed rational weighting rather than any code in this repository.
+  See the proof of Theorem 5 in the paper.
+  The current revision of Figure 1 no longer includes a Thomassen 34-graph panel.
 
 ## Requirements
 
-See `requirements.txt`. Core dependencies are `networkx` and `cvxpy`
-(with a standard open-source LP solver; `resistance.py` uses SCS by
-default, which ships with cvxpy).
+`networkx` (see `requirements.txt`), plus GLPK and GMP and a C compiler for `certify/rn`.
+The earlier cvxpy and SCS dependency is gone from `resistance.py`.
+`verify_figure2_examples.py` still names cvxpy in its comments, which describe how its captured output was produced.
 
 ## Citation
 
 If you use this code, please cite the paper:
 
 ```bibtex
-@article{2026resistance,
-  title   = {On some structural properties of graphs with non-negative resistance curvature},
-  author  = {Agrahari, Gyaneshwar and Bibby, Christin and Boros, Sean and Garcia, Hailey and Heiderscheidt, Fernando and Wang, Zhiyu},
-  year    = {2026},
-  note    = {arXiv preprint}
+@misc{agraharietal2026,
+  title         = {On some structural properties of graphs with non-negative resistance curvature},
+  author        = {Agrahari, Gyaneshwar and Bibby, Christin and Boros, Sean and Garcia, Hailey Jay and Heidercheidt, Fernando and Wang, Zhiyu},
+  year          = {2026},
+  eprint        = {2607.13169},
+  archivePrefix = {arXiv},
+  primaryClass  = {math.CO},
+  doi           = {10.48550/arXiv.2607.13169}
 }
 ```
