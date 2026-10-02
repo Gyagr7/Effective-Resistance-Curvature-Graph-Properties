@@ -2,7 +2,7 @@
  * rn.c -- recognise RN / RP / SRN graphs.
  *
  * AI disclosure.
- * Claude Opus 5 (Anthropic) wrote this file in its entirety: the formulation of the program, the structural shortcut, the separation routine, the exact rational certification, the I/O, and these comments.
+ * Claude Opus 5 (Anthropic) wrote this file in its entirety: the formulation of the program, the structural shortcuts, the separation routine, the exact rational certification, the I/O, and these comments.
  * Hailey Jay Garcia directed and supervised that work, reviewed the result, and is responsible for the correctness of the mathematics it rests on and of the answers it reports.
  *
  * Citation keys are those of ../references.bib.
@@ -32,6 +32,17 @@
  *   Conversely P_n is RN at x = 1, and RP exactly when n <= 2.  []
  *
  * A path is therefore answered outright, and so is every other graph with a cut vertex, which leaves the program only 2-connected graphs.
+ * A second counting bound settles more of them for nothing.
+ *
+ *   Lemma.  Let G be bipartite with parts A, B, |A| <= |B|.  If |B| = |A| + 1 then G is not RP, and if |B| >= |A| + 2 then G is not RN.
+ *
+ *   Proof.  Every edge has exactly one end in A, so for x in P(G)
+ *       sum_{v in A} d_v(x) = x(E) = n - 1,
+ *   whence max_{v in A} d_v(x) >= (n-1)/|A| = (|A| + |B| - 1)/|A|.
+ *   That is >= 2 when |B| >= |A| + 1 and > 2 when |B| >= |A| + 2.  []
+ *
+ * The parts of a bipartite graph differ in parity with n, so the first case is the odd orders and the second the even ones.
+ * A gap of two or more is thus answered outright as well, and a gap of one skips the RP program and runs only the RN one, which is where the saving is: the bipartite graphs that are RN are exactly the ones that used to pay for both programs.
  * There P(G) carries the one equality x(E) = n - 1 and no implicit one, so there the relative interior really is the strict system.
  * That leaves one program with integer data, and integer data is what makes exact rational arithmetic practical:
  *
@@ -743,6 +754,54 @@ static int two_connected(const Graph *g, int *cut)
 	free(disc); free(low); free(pe); free(it); free(vstk);
 	*cut = found;
 	return found < 0;
+}
+
+/*
+ * Two-colour the connected graph G.
+ * Return 1 and set *small to the size of the smaller part, or 0 when G has an odd cycle.
+ * See the second lemma at the head of the file for what the parts are good for.
+ */
+static int bipartition(const Graph *g, int *small)
+{
+	int n = g->n, m = g->m, i, top = 0, black = 0, ok = 1;
+	int *head, *nxt, *to, *col, *stk;
+
+	*small = 0;
+	head = xmalloc((size_t)n * sizeof *head);
+	nxt = xmalloc((size_t)m * 2 * sizeof *nxt);
+	to = xmalloc((size_t)m * 2 * sizeof *to);
+	for (i = 0; i < n; i++)
+		head[i] = -1;
+	for (i = 0; i < m; i++) {
+		to[2 * i] = g->ev[i]; nxt[2 * i] = head[g->eu[i]]; head[g->eu[i]] = 2 * i;
+		to[2 * i + 1] = g->eu[i]; nxt[2 * i + 1] = head[g->ev[i]]; head[g->ev[i]] = 2 * i + 1;
+	}
+	col = xmalloc((size_t)n * sizeof *col);
+	stk = xmalloc((size_t)n * sizeof *stk);
+	for (i = 0; i < n; i++)
+		col[i] = -1;
+	col[0] = 0;
+	stk[top++] = 0;
+	while (top && ok) {
+		int v = stk[--top], a;
+		for (a = head[v]; a >= 0; a = nxt[a]) {
+			int w = to[a];
+			if (col[w] < 0) {
+				col[w] = 1 - col[v];
+				stk[top++] = w;
+			} else if (col[w] == col[v]) {
+				ok = 0;			/* an odd cycle */
+				break;
+			}
+		}
+	}
+	if (ok) {
+		for (i = 0; i < n; i++)
+			black += (col[i] == 1);
+		*small = black < n - black ? black : n - black;
+	}
+	free(head); free(nxt); free(to); free(col); free(stk);
+	return ok;
 }
 
 /* Is the connected graph G a path?  Trees of maximum degree 2 and nothing else. */
@@ -1920,9 +1979,33 @@ static void emit_shortcut(FILE *f, const Graph *g, int cut, const Opts *o)
 	}
 }
 
+/*
+ * Answer a bipartite graph whose parts differ by two or more, by the second lemma at the head of this file.
+ * The certificate is the smaller part: max_{v in A} d_v(x) >= (n-1)/|A| > 2 holds on all of P(G), so no point of it has every degree at most 2.
+ */
+static void emit_bipartite_gap(FILE *f, const Graph *g, int small, const Opts *o)
+{
+	fputs(",\"two_connected\":true,\"shortcut\":\"bipartite-gap\""
+	      ",\"class\":\"not RN\",\"rn\":false,\"rp\":false,\"srn\":false"
+	      ",\"delta\":null,\"lambda\":null,\"rank_cuts\":0,\"rounds\":0", f);
+	if (o->exact) {
+		fputs(",\"exact\":{\"status\":\"certified\",\"reason\":", f);
+		{
+			char buf[160];
+			snprintf(buf, sizeof buf,
+				 "bipartite with parts %d and %d, so max_v d_v(x) >= %d/%d > 2 on all of P(G)",
+				 small, g->n - small, g->n - 1, small);
+			jsquote(f, buf);
+		}
+		fputs("}", f);
+	}
+	if (o->witness)
+		fputs(",\"witness\":null", f);
+}
+
 static void run_one(FILE *f, Graph *g, const Opts *o)
 {
-	int n = g->n, m = g->m, i, v, cut;
+	int n = g->n, m = g->m, i, v, cut, bip, small, gap = 0, skip_rp = 0;
 	Program rpP, rnP;
 	Cert rpC, rnC;
 	int rp_v, rn_v = 0, rp = 0, rn = 0, ranrn = 0, cert_ok = 1, theta_empty = 0;
@@ -1970,7 +2053,12 @@ static void run_one(FILE *f, Graph *g, const Opts *o)
 	}
 	fputs(",\"connected\":true", f);
 
-	/* By the lemma at the head of this file a graph that is not 2-connected needs no program at all. */
+	bip = bipartition(g, &small);
+	fprintf(f, ",\"bipartite\":%s", bip ? "true" : "false");
+	if (bip)
+		fprintf(f, ",\"parts\":[%d,%d]", small, n - small);
+
+	/* By the first lemma at the head of this file a graph that is not 2-connected needs no program at all. */
 	if (!two_connected(g, &cut)) {
 		emit_shortcut(f, g, cut, o);
 		clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -1980,8 +2068,31 @@ static void run_one(FILE *f, Graph *g, const Opts *o)
 		fputs("}", f);
 		return;
 	}
-	fputs(",\"two_connected\":true,\"shortcut\":null", f);
+	/* And by the second, a bipartite graph whose parts differ by two or more is not RN, while a gap of one rules out RP and leaves only the RN program to run. */
+	gap = bip ? (n - small) - small : 0;
+	if (gap >= 2) {
+		emit_bipartite_gap(f, g, small, o);
+		clock_gettime(CLOCK_MONOTONIC, &ts);
+		t1 = ts.tv_sec + 1e-9 * ts.tv_nsec;
+		fputs(",\"seconds\":", f);
+		fprintf(f, "%.6f", t1 - t0);
+		fputs("}", f);
+		return;
+	}
+	skip_rp = (gap == 1);
+	fputs(",\"two_connected\":true,\"shortcut\":", f);
+	if (skip_rp)
+		jsquote(f, "bipartite-unbalanced");
+	else
+		fputs("null", f);
 
+	if (skip_rp) {
+		/* max_{v in A} d_v(x) >= 2 throughout P(G), so the RP program would report an optimum of at most 0 and is not run. */
+		memset(&rpP, 0, sizeof rpP);
+		rpP.st = -1;
+		cert_init(&rpC, m + 1);
+		rp = rn = rp_v = 0;
+	} else {
 	program_solve(&rpP, g, 1, o->exact);
 	if (o->exact && rpP.st == 0)
 		certify(&rpC, g, &rpP);
@@ -1999,6 +2110,7 @@ static void run_one(FILE *f, Graph *g, const Opts *o)
 			theta_empty = 1;
 		else if (rpP.st == 0 && rpP.opt < -OPT_TOL)
 			theta_empty = 1;
+	}
 	}
 
 	if (!rp && !theta_empty) {
@@ -2023,8 +2135,11 @@ static void run_one(FILE *f, Graph *g, const Opts *o)
 	fprintf(f, ",\"rn\":%s,\"rp\":%s,\"srn\":%s",
 		rn ? "true" : "false", rp ? "true" : "false",
 		(rn && !rp) ? "true" : "false");
-	fputs(",\"delta\":", f);
-	jsnum(f, rpP.st == 0 ? rpP.opt : 0.0);
+	fputs(",\"delta\":", f);			/* null when the RP program was not run at all */
+	if (skip_rp)
+		fputs("null", f);
+	else
+		jsnum(f, rpP.st == 0 ? rpP.opt : 0.0);
 	fputs(",\"lambda\":", f);
 	jsnum(f, (ranrn && rnP.st == 0) ? rnP.opt : 0.0);
 	fprintf(f, ",\"rank_cuts\":%d,\"rounds\":%d",

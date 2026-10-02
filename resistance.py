@@ -24,6 +24,10 @@ and `rn` decides each by the program of (guo2026lp, Theorem 2.1),
 
 with s = 1 for RP and s = 0 for RN, so the property holds exactly when the optimum is positive.
 The program is only ever run on a 2-connected graph, which is `rn`'s own departure from (guo2026lp) and is described in the source of `certify/rn.c`: a connected graph that is not 2-connected is RN exactly when it is a path, so those graphs are answered structurally and the relative interior of P(G) is the strict system on everything that reaches the program.
+Two counting bounds then shorten the rest.
+In a bipartite graph with parts A, B, |A| <= |B|, every edge has one end in A, so sum_{v in A} d_v(x) = x(E) = n - 1 for every x in P(G) and max_{v in A} d_v(x) >= (n-1)/|A|.
+A gap |B| - |A| >= 2 therefore makes G not RN with no program at all, and a gap of exactly 1 makes it not RP, so only the RN program is run.
+The report names the route in `shortcut`, and the parts in `parts`.
 The certifier separates the rank inequalities on demand, each as a minimum cut.
 Under `--exact` it then re-solves the rows tight at the floating point optimum in rational arithmetic, both forwards for the vertex and transposed for the dual.
 Those two solutions bound the optimum from each side, which certifies its sign.
@@ -218,6 +222,7 @@ def resistance_positive_decision(
 
     This reads the verdict of `rn_report` back as plain Python.
     A graph that is not 2-connected is settled without a program: a path comes back SRN (RP for at most one edge), and every other graph with a cut vertex comes back not RN.
+    So is a bipartite graph whose parts differ by two or more, which comes back not RN.
 
     Parameters
     ----------
@@ -261,14 +266,15 @@ def resistance_positive_decision(
 
     if verbose:
         n, m = report["n"], report["m"]
-        print(f"n={n}, m={m}, 2-connected={report['two_connected']}")
+        parts = report.get("parts")
+        print(f"n={n}, m={m}, 2-connected={report.get('two_connected')}"
+              + (f", parts={parts[0]}+{parts[1]}" if parts else ""))
         if report.get("shortcut"):
             where = report.get("cut_vertex")
             at = f" at {where}" if where is not None else ""
-            print(f"shortcut: {report['shortcut']}{at}, no program needed")
-        else:
-            print(f"separation: {report['rank_cuts']} rank cuts over "
-                  f"{report['rounds']} rounds, {report['seconds']:.4f}s")
+            print(f"shortcut: {report['shortcut']}{at}")
+        print(f"separation: {report['rank_cuts']} rank cuts over "
+              f"{report['rounds']} rounds, {report['seconds']:.4f}s")
         if exact:
             opt = report["exact"].get("optimum")
             lo = report["exact"].get("bound_lower")

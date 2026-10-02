@@ -10,7 +10,7 @@ Citation keys below are those of `references.bib`.
 
 ## AI disclosure
 
-Claude Opus 5 (Anthropic) wrote `certify/rn.c` and `certify/sweep.py` in their entirety, including the formulation of the linear program, the structural shortcut and its lemma, the separation routine, the exact rational certification, the I/O, and the comments.
+Claude Opus 5 (Anthropic) wrote `certify/rn.c` and `certify/sweep.py` in their entirety, including the formulation of the linear program, the structural shortcuts and their lemmas, the separation routine, the exact rational certification, the I/O, and the comments.
 It also drafted parts of the prose and the docstrings elsewhere in this repository, and the current form of `resistance.py`.
 Hailey Jay Garcia directed and supervised that work, reviewed the result, and is responsible for the mathematics it rests on and for the answers it reports.
 The mathematical content of the paper is the authors' own.
@@ -88,7 +88,11 @@ The certifier decides each by the linear program of (guo2026lp, Theorem 2.1),
 with s = 1 for RP and s = 0 for RN, so the property holds exactly when the optimum is positive.
 The program is only ever run on a 2-connected graph, which is this implementation's own departure from (guo2026lp) and is how the relative interior is handled.
 A connected graph that is not 2-connected is RN exactly when it is a path, by a short lemma proved at the head of `certify/rn.c`, so a graph with a cut vertex is answered structurally: a path is SRN (RP when it has at most one edge) with witness x = 1, and nothing else with a cut vertex is RN.
-The report names the route taken in its `shortcut` field, and the cut vertex in `cut_vertex` when that is the reason.
+A second counting bound settles more of them.
+In a bipartite graph with parts A, B and |A| <= |B|, every edge has exactly one end in A, so sum over v in A of d_v(x) equals x(E) = n - 1 for every x in P(G), and hence max_v d_v(x) >= (n-1)/|A|.
+A gap |B| - |A| >= 2 therefore puts every point of P(G) above 2 somewhere and G is not RN, again with no program at all; a gap of exactly 1 rules out RP, so only the RN program is run.
+Since the parts differ in parity with n, the first case is the even orders and the second the odd ones.
+The report names the route taken in its `shortcut` field (`path`, `cut-vertex`, `bipartite-gap`, `bipartite-unbalanced`, or `null` when the programs ran), the cut vertex in `cut_vertex`, and the part sizes in `parts`.
 On what reaches the program, 2-connected graphs, P(G) carries the single equality x(E) = n - 1 and the relative interior really is the strict system above.
 The rank inequalities are separated on demand, each as a minimum cut.
 
