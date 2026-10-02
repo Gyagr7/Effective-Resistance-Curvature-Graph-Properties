@@ -2,38 +2,62 @@
 resistance.py
 =============
 
-Decide whether a graph is resistance nonnegative (RN) or resistance
-positive (RP), in the sense of Devriendt's discrete resistance
-curvature (Devriendt, "Graphs with nonnegative resistance curvature",
-Ann. Combin. 2025; Theorem 1 of the accompanying paper).
+Decide whether a graph is resistance nonnegative (RN), resistance positive (RP), or strictly resistance nonnegative (SRN), in the sense of Devriendt's discrete resistance curvature (devriendt2025, agraharietal2026 Theorem 1).
+Citation keys are those of `references.bib`.
 
 Method
 ------
-By Theorem 1, letting
+This module only wraps the certifier `certify/rn`: it serializes a graph, runs the certifier on it, and reads the verdict back.
+The certifier decides by linear programming over the spanning tree polytope, in exact rational arithmetic.
+Write P(G) for the spanning tree polytope, P(G)^o for its relative interior, and d_v(x) for the sum of x_e over the edges at v.
+Theorem 1 then says
 
-    t*(G) = min_{x in P(G)} max_{v in V(G)} x(E(v))
+    G is RN  <=>  P(G)^o INTERSECT { x : d_v(x) <= 2 for all v }  !=  empty
+    G is RP  <=>  P(G)^o INTERSECT { x : d_v(x) <  2 for all v }  !=  empty
 
-over the spanning tree polytope P(G), G is RN if t* <= 2 and RP if
-t* < 2 (each up to the tolerance `tol_rp`).
+and `rn` decides each by the program of (guo2026lp, Theorem 2.1),
 
-The spanning tree polytope is described by
-    x_e >= 0                     for every edge e
-    sum_e x_e = |V(G)| - 1
-    x(E[S]) <= |S| - 1           for every subtour set S (2 <= |S| <= n-1)
+    max t   s.t.   x(E_B) = n_B - 1                (every block B)
+                   x_e >= t                        (e in a 2-connected block)
+                   x(E_B[S]) + (|S|-1) t <= |S|-1  (S a proper nonempty set of vertices of such a B)
+                   d_v(x) + s t <= 2               (every v)
 
-The subtour constraints are exponential in number, so t* is found by a
-cutting-plane method: solve the LP with only the trivial constraints,
-use a min s-t cut to find the most-violated subtour constraint (the
-construction described in Svensson's notes on the spanning tree
-polytope), add it, and repeat until no violation remains.
+with s = 1 for RP and s = 0 for RN, so the property holds exactly when the optimum is positive.
+Running the program over the blocks B rather than over G is `rn`'s own departure from (guo2026lp), described in the source of `certify/rn.c`.
+The certifier separates the rank inequalities on demand, each as a minimum cut.
+Under `--exact` it then re-solves the rows tight at the floating point optimum in rational arithmetic, both forwards for the vertex and transposed for the dual.
+Those two solutions bound the optimum from each side, which certifies its sign.
+
+Requirements
+------------
+Build `certify/rn` once:
+
+    make -C certify
+
+The build needs GLPK and GMP, packaged as `glpk` and `gmp` on Arch and as `libglpk-dev` and `libgmp-dev` on Debian.
+This module builds `rn` on first use, if the binary is missing and a compiler is available.
+Set the environment variable `RN_BIN` to use a binary from elsewhere.
 """
 
 from __future__ import annotations
 
+import json
+import os
+import shutil
+import subprocess
+from fractions import Fraction
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import cvxpy as cp
 import networkx as nx
+
+_HERE = Path(__file__).resolve().parent
+_CERTIFY_DIR = _HERE / "certify"
+_VENDORED_BIN = _CERTIFY_DIR / "rn"
+
+
+class CertificationError(RuntimeError):
+    """Raised when `rn` ran but did not come back with a certified answer."""
 
 
 # ---------------------------------------------------------------------
@@ -41,17 +65,17 @@ import networkx as nx
 # ---------------------------------------------------------------------
 
 def _canon_edge(u, v):
-    """Canonical (order-independent) representation of an undirected edge."""
+    """Return the edge {u, v} as an ordered pair, independent of how it was given."""
     return (u, v) if u <= v else (v, u)
 
 
 def _build_edge_list(G: nx.Graph) -> List[Tuple]:
-    """Canonical edge list for G, in a fixed order."""
+    """Return the edges of G, canonicalized and in a fixed order."""
     return [_canon_edge(u, v) for (u, v) in G.edges()]
 
 
 def _incident_sums(nodes, edges, x_vals) -> Dict:
-    """For each vertex v, the sum of x_e over edges e incident to v."""
+    """Return d_v(x) at every vertex v, for x given as a list parallel to `edges`."""
     inc = {v: 0.0 for v in nodes}
     for (u, v), xe in zip(edges, x_vals):
         xe = float(xe)
@@ -61,236 +85,195 @@ def _incident_sums(nodes, edges, x_vals) -> Dict:
 
 
 # ---------------------------------------------------------------------
-# Subtour separation
+# Locating and driving the certifier
 # ---------------------------------------------------------------------
 
-def _separate_subtour_via_mincut(
-    G: nx.Graph,
-    nodes: List,
-    edges: List[Tuple],
-    x_vals,
-    sep_eps: float = 1e-8,
-) -> Optional[Tuple[set, float, float]]:
+def _rn_binary(build: bool = True) -> str:
     """
-    Separation oracle for the subtour constraints x(E(S)) <= |S| - 1,
-    over all nonempty proper subsets S.
+    Return the path to the `rn` executable.
 
-    Uses the s-t min-cut construction described in Svensson's notes:
-    add source s and sink t; arcs s -> v with capacity x(delta(v))/2;
-    arcs v -> t with capacity 1; each undirected edge {u, v} becomes two
-    directed arcs u -> v and v -> u, each with capacity x_e / 2. A
-    minimum s-t cut then corresponds to a most-violated subtour
-    inequality.
-
-    To keep the empty set from trivially dominating every cut, a root
-    vertex is forced into the source side (by setting its s -> root
-    capacity to a very large number); repeating this for every choice
-    of root guarantees any violated subtour set will be found by some
-    iteration of the loop.
-
-    Returns (S, violation_amount, cut_value) for the most-violated set
-    found, or None if no subtour constraint is violated by more than
-    `sep_eps`.
+    Check $RN_BIN first, then certify/rn, then $PATH, and finally run `make -C certify` if `build` is set.
     """
-    x_dict = {e: float(xe) for e, xe in zip(edges, x_vals)}
-    x_total = sum(x_dict.values())
-    n = len(nodes)
+    env = os.environ.get("RN_BIN")
+    if env:
+        if not os.access(env, os.X_OK):
+            raise FileNotFoundError(f"RN_BIN is set to {env!r}, which is not executable")
+        return env
 
-    inc = _incident_sums(nodes, edges, x_vals)
+    if os.access(_VENDORED_BIN, os.X_OK):
+        return str(_VENDORED_BIN)
 
-    # A safe "infinity": cut values are O(n + x_total), so this comfortably
-    # dominates any finite cut.
-    BIGM = 10.0 * (n + x_total + 1.0)
+    found = shutil.which("rn")
+    if found:
+        return found
 
-    best = None  # (S, violation_amount, cut_value)
+    if build and (_CERTIFY_DIR / "rn.c").is_file():
+        make = shutil.which("make")
+        if make:
+            proc = subprocess.run([make, "-s", "-C", str(_CERTIFY_DIR)],
+                                  capture_output=True, text=True)
+            if proc.returncode == 0 and os.access(_VENDORED_BIN, os.X_OK):
+                return str(_VENDORED_BIN)
+            detail = (proc.stderr or proc.stdout).strip()
+            raise FileNotFoundError(
+                "could not build the certifier in certify/.\n"
+                f"`make -C certify` said:\n{detail}\n\n"
+                "It needs GLPK and GMP: `glpk gmp` on Arch, "
+                "`libglpk-dev libgmp-dev` on Debian.")
 
-    for root in nodes:
-        H = nx.DiGraph()
-        H.add_node("s")
-        H.add_node("t")
+    raise FileNotFoundError(
+        "the `rn` certifier was not found. Build it with `make -C certify` "
+        "(needs GLPK and GMP), or point $RN_BIN at an existing binary.")
 
-        for v in nodes:
-            cap_sv = BIGM if v == root else inc[v] / 2.0
-            H.add_edge("s", v, capacity=cap_sv)
-            H.add_edge(v, "t", capacity=1.0)
 
-        for (u, v), xe in x_dict.items():
-            cap = xe / 2.0
-            H.add_edge(u, v, capacity=cap)
-            H.add_edge(v, u, capacity=cap)
+def _to_rn_json(G: nx.Graph) -> Tuple[dict, List]:
+    """
+    Serialize G for `rn`.
 
-        cut_value, (S_side, _T_side) = nx.minimum_cut(
-            H, "s", "t", capacity="capacity",
-            flow_func=nx.algorithms.flow.preflow_push,
-        )
+    Vertices go out as indices, so this also returns the table taking an index back to its label.
+    Reading the certificate needs that table.
+    """
+    nodes = list(G.nodes())
+    index = {v: i for i, v in enumerate(nodes)}
+    payload = {
+        "n": len(nodes),
+        "edges": [[index[u], index[v]] for u, v in G.edges()],
+    }
+    return payload, nodes
 
-        S = set(S_side)
-        if "s" not in S:
-            continue
-        S.discard("s")
 
-        if len(S) == 0 or len(S) == n:
-            continue  # only proper, nonempty subsets are valid subtour sets
+def _run_rn(payload: dict, exact: bool, build: bool = True) -> dict:
+    """Pipe one graph through `rn` and return its parsed report."""
+    binary = _rn_binary(build=build)
+    args = [binary, "--jsonl"]
+    if exact:
+        args.append("--exact")
+    proc = subprocess.run(args, input=json.dumps(payload),
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"{binary} exited {proc.returncode}: {proc.stderr.strip()}")
+    out = proc.stdout.strip()
+    if not out:
+        raise RuntimeError(f"{binary} produced no output: {proc.stderr.strip()}")
+    return json.loads(out.splitlines()[-1])
 
-        x_inside = sum(
-            xe for (u, v), xe in x_dict.items() if u in S and v in S
-        )
-        violation = x_inside - (len(S) - 1)
 
-        if violation > sep_eps and (best is None or violation > best[1]):
-            best = (S, violation, cut_value)
+def rn_report(G: nx.Graph, exact: bool = True, build: bool = True) -> dict:
+    """
+    Return the certifier's full report on G.
 
-    return best
+    See `certify/rn.c` for the field list.
+    Vertices and edges come back under G's own labels rather than the indices sent to `rn`.
+    """
+    if not nx.is_connected(G):
+        raise ValueError("Graph must be connected (no spanning tree otherwise).")
+
+    payload, nodes = _to_rn_json(G)
+    report = _run_rn(payload, exact=exact, build=build)
+
+    if not report.get("connected", True):
+        raise ValueError(report.get("error", "rn reports G as disconnected"))
+    if report.get("class") is None:
+        raise RuntimeError(f"rn returned no verdict: {report.get('error')}")
+    if exact and report.get("exact", {}).get("status") != "certified":
+        raise CertificationError(
+            f"rn could not certify its answer for this graph "
+            f"(status={report.get('exact', {}).get('status')!r}). "
+            f"Re-run with exact=False to accept the floating point verdict.")
+
+    # Translate rn's indices back to this graph's own labels.
+    report["vertices"] = [nodes[i] for i in report["vertices"]]
+    report["edges"] = [_canon_edge(nodes[u], nodes[v]) for u, v in report["edges"]]
+    exact_block = report.get("exact")
+    witnesses = [report.get("witness"),
+                 exact_block.get("witness") if isinstance(exact_block, dict) else None]
+    for w in witnesses:
+        if isinstance(w, dict) and w.get("zero_curvature"):
+            w["zero_curvature"] = [nodes[i] for i in w["zero_curvature"]]
+    return report
 
 
 # ---------------------------------------------------------------------
-# Main decision procedure
+# The decision
 # ---------------------------------------------------------------------
+
+def _witness_of(report: dict) -> Optional[dict]:
+    """Return the exact witness if there is one, and the floating point one otherwise."""
+    exact = report.get("exact")
+    if isinstance(exact, dict) and isinstance(exact.get("witness"), dict):
+        return exact["witness"]
+    w = report.get("witness")
+    return w if isinstance(w, dict) else None
+
 
 def resistance_positive_decision(
     G: nx.Graph,
-    solver: str = "SCS",
-    scs_eps: float = 1e-7,
-    scs_max_iters: int = 200_000,
-    max_outer_iters: int = 200,
-    sep_eps: float = 1e-15,
-    tol_rp: float = 1e-6,
+    exact: bool = True,
+    build: bool = True,
     verbose: bool = True,
 ):
     """
-    Decide the RN / RP status of a connected graph G.
+    Decide the RN / RP / SRN status of a connected graph G.
 
-    For 2-connected graphs, this minimizes t = max_v x(E(v)) over the
-    spanning tree polytope via a cutting-plane LP (the advisor's
-    original method, unmodified) and classifies:
-        RN iff t* <= 2 + tol_rp,   RP iff t* < 2 - tol_rp
-
-    Two structural cases are checked FIRST, before the LP, because the
-    closed-polytope minimum t* cannot correctly decide RN on them no
-    matter the tolerance -- this isn't a numerical-precision issue, it's
-    that t* is the wrong quantity to compare on these graphs:
-
-    1. G is a tree (unique spanning tree = G itself): P(G) is a single
-       point, decided directly by G's own max degree.
-    2. G is connected but not 2-connected, and not a tree: G is
-       PROVABLY not RN, by a cited theorem in the paper (Devriendt: the
-       only RN graphs that are not 2-connected are paths). For example,
-       the bowtie graph (two triangles sharing a hub vertex) has
-       t*=2 exactly, which the closed-LP's "t* <= 2 + tol" rule reads as
-       RN=True -- but the bowtie is not 2-connected and not a path, so
-       it is definitively not RN regardless of what t* says. P(G) is
-       lower-dimensional for such graphs (some subtour constraint is a
-       forced equality across the whole polytope, not just at the
-       optimum), which is exactly the structural fact the closed t*
-       check has no way to see.
+    This reads the verdict of `rn_report` back as plain Python.
+    The certifier decomposes G into blocks, so a path comes back SRN and every other graph with a cut vertex comes back not RN.
 
     Parameters
     ----------
-    solver, scs_eps, scs_max_iters : passed through to cvxpy's SCS solver.
-    max_outer_iters : cap on the number of cutting-plane rounds.
-    sep_eps : minimum violation the separator will act on.
-    tol_rp : tolerance used when comparing t* to 2 for the RN/RP decision.
-    verbose : print per-iteration diagnostics.
+    exact : certify the sign of the optimum in rational arithmetic.
+        Raise `CertificationError` if no certificate is found.
+        With `exact=False` the floating point verdict is returned unchecked.
+        That runs roughly 20% faster and is unsound on edge cases.
+    build : build `certify/rn` if it is missing, as described in `_rn_binary`.
+    verbose : print the verdict and the certificate.
 
     Returns
     -------
     rp : bool
     rn : bool
-    t_star : float or None -- None for the tree / not-2-connected cases,
-        where no LP is solved (there is no single "t*" for those).
-    x_dict : dict -- edge -> x_e; for the tree case this is the trivial
-        all-ones assignment, for the not-2-connected-not-path case it is
-        None (no witness point is needed for a "not RN" conclusion).
+    t_star : float or None
+        max_v d_v(x) at the returned witness x.
+    x_dict : dict or None
+        edge -> x_e for the witness point, labelled by G.
+
+    Raises
+    ------
+    ValueError : G is not connected.
+    CertificationError : `exact` was set and no certificate was obtained.
+    FileNotFoundError : the certifier was missing and could not be built.
     """
-    if not nx.is_connected(G):
-        raise ValueError("Graph must be connected (no spanning tree otherwise).")
+    report = rn_report(G, exact=exact, build=build)
 
-    nodes = list(G.nodes())
-    n = len(nodes)
+    rp = bool(report["rp"])
+    rn = bool(report["rn"])
+    witness = _witness_of(report)
 
-    # --- Structural pre-checks (see docstring for why these come first) ---
+    t_star: Optional[float] = None
+    x_dict: Optional[Dict] = None
+    if witness is not None:
+        # Exact mode sends rationals as strings such as "11/6".
+        # Fraction reads those and the floats of the inexact mode alike.
+        degrees = [Fraction(str(d)) for d in witness["degree"]]
+        t_star = float(max(degrees)) if degrees else 0.0
+        x_dict = {e: float(Fraction(str(xe)))
+                  for e, xe in zip(report["edges"], witness["point"])}
 
-    is_tree = G.number_of_edges() == n - 1
-    if is_tree:
-        max_deg = max(dict(G.degree()).values()) if n > 1 else 0
-        rn = max_deg <= 2
-        rp = max_deg < 2
-        if verbose:
-            print(f"G is a tree; max degree = {max_deg} -> RN={rn}, RP={rp}")
-        return rp, rn, None, {e: 1.0 for e in _build_edge_list(G)}
-
-    if not nx.is_biconnected(G):
-        if verbose:
-            print("G is connected but not 2-connected, and not a tree "
-                  "-> RN=False, RP=False (Devriendt: only paths are RN "
-                  "among non-2-connected graphs)")
-        return False, False, None, None
-
-    # --- 2-connected case: the advisor's original cutting-plane LP ---
-
-    edges = _build_edge_list(G)
-    m = len(edges)
-
-    # Edge incidence list, for the degree constraints below.
-    incident = {v: [] for v in nodes}
-    for i, (u, v) in enumerate(edges):
-        incident[u].append(i)
-        incident[v].append(i)
-
-    # Variables: x_e for each edge, and t = max expected degree.
-    x = cp.Variable(m)
-    t = cp.Variable()
-
-    constraints = [
-        x >= 0,
-        cp.sum(x) == n - 1,
-        t >= 0,
-    ]
-    constraints += [cp.sum(x[incident[v]]) <= t for v in nodes]
-
-    subtour_constraints = []
-
-    for it in range(max_outer_iters):
-        prob = cp.Problem(cp.Minimize(t), constraints + subtour_constraints)
-        prob.solve(solver=solver, verbose=False, eps=scs_eps, max_iters=scs_max_iters)
-
-        if prob.status not in ("optimal", "optimal_inaccurate"):
-            raise RuntimeError(f"LP solve failed: status={prob.status}")
-
-        x_vals = x.value
-        t_star = float(t.value)
-
-        viol = _separate_subtour_via_mincut(G, nodes, edges, x_vals, sep_eps=sep_eps)
-
-        if verbose:
-            if viol is None:
-                print(f"iter={it}, t={t_star:.12f}, subtour_violation=None")
-            else:
-                S, vamt, _cutv = viol
-                print(f"iter={it}, t={t_star:.12f}, subtour_violation={vamt:.3e}, |S|={len(S)}")
-
-        if viol is None:
-            break
-
-        S, _, _ = viol
-        idxs = [i for i, (u, v) in enumerate(edges) if u in S and v in S]
-        subtour_constraints.append(cp.sum(x[idxs]) <= len(S) - 1)
-
-    x_dict = {edges[i]: float(x.value[i]) for i in range(m)}
-
-    # RN / RP decision, with a tolerance around t* = 2.
-    rn = t_star <= 2.0 + tol_rp
-    rp = t_star < 2.0 - tol_rp
-
-    # Hard certificate: an imbalanced bipartite graph can never be RP
-    # (this guards against solver noise producing a false RP=True on
-    # such graphs).
-    if nx.is_bipartite(G):
-        color = nx.algorithms.bipartite.color(G)
-        a = sum(1 for v in color if color[v] == 0)
-        b = len(color) - a
-        if a != b:
-            rp = False
+    if verbose:
+        n, m = report["n"], report["m"]
+        print(f"n={n}, m={m}, blocks={report['blocks']}, "
+              f"bridges={report['bridges']}")
+        print(f"separation: {report['rank_cuts']} rank cuts over "
+              f"{report['rounds']} rounds, {report['seconds']:.4f}s")
+        if exact:
+            opt = report["exact"].get("optimum")
+            lo = report["exact"].get("bound_lower")
+            hi = report["exact"].get("bound_upper")
+            shown = opt if opt is not None else f"in [{lo}, {hi}]"
+            print(f"certified: optimum = {shown}")
+        print(f"class={report['class']}  ->  RN={rn}, RP={rp}")
+        if t_star is not None:
+            print(f"witness: max_v d_v(x) = {t_star:.12f}")
 
     return rp, rn, t_star, x_dict
 
