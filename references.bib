@@ -1,14 +1,23 @@
 % references.bib -- the bibliography cited from the source files in this repository.
-% Keys are the ones those files name, such as (devriendt2025).
+% Keys are the ones those files name, such as (devriendt2026).
 
-@article{devriendt2025,
+% Corollary 3.9 is the polytope characterisation, Remark 3.10 the observation that it is a linear program,
+% Proposition 3.5 the bipartite bound, and Proposition 3.7 the lemma that only paths are RN without 2-connectivity.
+@article{devriendt2026,
   title   = {Graphs with nonnegative resistance curvature},
   author  = {Devriendt, Karel},
   journal = {Annals of Combinatorics},
-  year    = {2025}
+  volume  = {30},
+  pages   = {415--438},
+  year    = {2026},
+  doi     = {10.1007/s00026-025-00774-x},
+  eprint  = {2410.07756},
+  archivePrefix = {arXiv},
+  primaryClass  = {math.CO},
+  note    = {Ann. Comb. 30 (2026) 415--438, published online 6 August 2025}
 }
 
-% Theorem 2.1 is the linear programming characterisation that `certify/rn.c` implements.
+% Theorem 2.1 has the same shape as the program in `certify/rn.c`.
 @misc{guo2026lp,
   title         = {Resistance Curvature: Recognition, Polyhedral Structure, and Graph Products},
   author        = {Guo, Meng and Sun, Wensheng and Yang, Yujun},
@@ -33,7 +42,7 @@
   note      = {Theorem 3.4.18}
 }
 
-% Cited for the classification of strictly RN graphs, for the nonexistence of 1-tough SRN graphs, and for the toughness an RN graph can attain below 1, which is the RN half of the cut bound in `certify/rn.c`.
+% Classification of strictly RN graphs, for the nonexistence of 1-tough SRN graphs, and for the toughness an RN graph can attain below 1, the RN half of the cut bound in `certify/rn.c`.
 @misc{garcia2026srn,
   title         = {Classification of strictly resistance nonnegative graphs},
   author        = {Garcia, Hailey Jay},
