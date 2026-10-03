@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the paper below."
+title: "Code for \"On Some Structural Properties of Graphs with Non-Negative Resistance Curvature\""
+abstract: >-
+  Code used to check the RN/RP status, sprawling property, and toughness of
+  the graphs discussed in the accompanying paper, including an exact
+  certifier for resistance nonnegativity built on a linear program over the
+  spanning tree polytope.
+type: software
+repository-code: "https://github.com/Gyagr7/Effective-Resistance-Curvature-Graph-Properties"
+authors:
+  - family-names: Agrahari
+    given-names: Gyaneshwar
+  - family-names: Bibby
+    given-names: Christin
+  - family-names: Boros
+    given-names: Sean
+  - family-names: Garcia
+    given-names: "Hailey Jay"
+  - family-names: Heidercheidt
+    given-names: Fernando
+  - family-names: Wang
+    given-names: Zhiyu
+preferred-citation:
+  type: article
+  title: "On some structural properties of graphs with non-negative resistance curvature"
+  year: 2026
+  doi: 10.48550/arXiv.2607.13169
+  url: "https://arxiv.org/abs/2607.13169"
+  authors:
+    - family-names: Agrahari
+      given-names: Gyaneshwar
+    - family-names: Bibby
+      given-names: Christin
+    - family-names: Boros
+      given-names: Sean
+    - family-names: Garcia
+      given-names: "Hailey Jay"
+    - family-names: Heidercheidt
+      given-names: Fernando
+    - family-names: Wang
+      given-names: Zhiyu
