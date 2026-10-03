@@ -2,7 +2,7 @@
 resistance.py
 =============
 
-Decide whether a graph is resistance nonnegative (RN), resistance positive (RP), or strictly resistance nonnegative (SRN), in the sense of Devriendt's discrete resistance curvature (devriendt2025, agraharietal2026 Theorem 1).
+Decide whether a graph is resistance nonnegative (RN), resistance positive (RP), or strictly resistance nonnegative (SRN), in the sense of Devriendt's discrete resistance curvature (devriendt2026 Corollary 3.9, agraharietal2026 Theorem 1).
 Citation keys are those of `references.bib`.
 
 Method
@@ -15,7 +15,8 @@ Theorem 1 then says
     G is RN  <=>  P(G)^o INTERSECT { x : d_v(x) <= 2 for all v }  !=  empty
     G is RP  <=>  P(G)^o INTERSECT { x : d_v(x) <  2 for all v }  !=  empty
 
-and `rn` decides each by the program of (guo2026lp, Theorem 2.1),
+and (devriendt2026, Remark 3.10) notes that this makes the decision a linear program over P(G), once a tolerance turns the strict inequalities into non-strict ones.
+Promoting that tolerance to a scalar t to maximize gives the program `rn` runs, which is also the shape of the two programs of (guo2026lp, Theorem 2.1),
 
     max t   s.t.   x(E) = n - 1
                    x_e >= t                        (every edge e)
@@ -23,7 +24,7 @@ and `rn` decides each by the program of (guo2026lp, Theorem 2.1),
                    d_v(x) + s t <= 2               (every v)
 
 with s = 1 for RP and s = 0 for RN, so the property holds exactly when the optimum is positive.
-The program is only ever run on a 2-connected graph, which is `rn`'s own departure from (guo2026lp) and is described in the source of `certify/rn.c`: a connected graph that is not 2-connected is RN exactly when it is a path, so those graphs are answered structurally and the relative interior of P(G) is the strict system on everything that reaches the program.
+The program is only ever run on a 2-connected graph, which is how `rn` handles the relative interior and is described in the source of `certify/rn.c`: a connected graph that is not 2-connected is RN exactly when it is a path (devriendt2026, Proposition 3.7), so those graphs are answered structurally and the relative interior of P(G) is the strict system on everything that reaches the program.
 A counting bound over vertex cuts then shortens the rest.
 For a nonempty proper set of vertices S leaving c components in G - S, the rank inequalities give max_{v in S} d_v(x) >= 1 + (c-1)/|S| for every x in P(G), so c >= |S| + 1 rules out RP and c >= |S| + 2 rules out RN with no program at all.
 The RP half is the 1-toughness of RP graphs (fiedler2011, Theorem 3.4.18) and the RN half is the toughness an RN graph can attain below 1 (garcia2026srn); `rn` hunts for the witnessing cut over a short deterministic candidate list.
