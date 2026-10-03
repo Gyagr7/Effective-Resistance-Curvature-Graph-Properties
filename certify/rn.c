@@ -9,17 +9,19 @@
  *
  * A graph G is resistance nonnegative (RN) if some positive conductance function c makes the resistance curvature p_v(c) = 1 - (1/2) sum_{u~v} r_uv(c) nonnegative at every vertex.
  * It is resistance positive (RP) if some c makes that curvature strictly positive everywhere, and strictly resistance nonnegative (SRN) if it is RN but not RP.
- * Devriendt's polytope characterisation (devriendt2025) turns this into
+ * Devriendt's polytope characterisation (devriendt2026, Corollary 3.9) turns this into
  *
  *     G is RN  <=>  P(G)^o INTERSECT { x : d_v(x) <= 2 for all v }  !=  empty
  *     G is RP  <=>  P(G)^o INTERSECT { x : d_v(x) <  2 for all v }  !=  empty
  *
  * where P(G) is the spanning tree polytope, P(G)^o its relative interior, and d_v(x) = sum_{e ni v} x_e.
- * (guo2026lp, Theorem 2.1) makes both decidable by linear programming.
+ * (devriendt2026, Remark 3.10) notes that this makes both decidable by linear programming, once a tolerance turns the strict inequalities into non-strict ones, and asks for the complexity in its Question 3.11.
+ * Promoting that tolerance to a scalar t to maximize gives the program below, which is also the shape of the two programs of (guo2026lp, Theorem 2.1).
  *
  * The delicate point is the relative interior, which one does not get by making the inequalities strict the moment G has a bridge.
  * (guo2026lp) handles it by measuring slack against an explicit interior point, the uniform spanning tree marginal vector.
  * We take the other route and remove the difficulty structurally, by a lemma that leaves the program a single case to decide.
+ * The lemma is (devriendt2026, Proposition 3.7), from the cut-vertex curvature computation of its Example 3.6; the proof is rewritten here in polytope terms, since the code's correctness rests on it.
  *
  *   Lemma.  A connected graph that is not 2-connected is RN exactly when it is a path.
  *
@@ -45,11 +47,11 @@
  *   and the claim follows by averaging over S.  []
  *
  * Both halves are known, and the certifier only needs the cut that witnesses them: the RP half is the 1-toughness of resistance positive graphs (fiedler2011, Theorem 3.4.18), and the RN half is the toughness an RN graph can attain below 1 (garcia2026srn).
- * Taking S to be a vertex cover, where every C_i is a single vertex, gives the bipartite corner: either part of a bipartite graph has c = n - |S|, so parts differing by one rule out RP and parts differing by two or more rule out RN.
+ * Taking S to be a vertex cover, where every C_i is a single vertex, gives the bipartite corner: either part of a bipartite graph has c = n - |S|, so parts differing by one rule out RP and parts differing by two or more rule out RN, which is (devriendt2026, Proposition 3.5).
  * The worst cut is NP-hard to find, but any cut is a certificate on its own, so the search below is a fixed, deterministic list of candidates: it is sound wherever it fires and costs one sweep where it does not.
  * A cut with c >= |S| + 2 therefore answers the graph outright, and one with c = |S| + 1 skips the RP program and runs only the RN one, which is where the saving is: the graphs that are RN but not RP are exactly the ones that would otherwise pay for both programs.
  * That route catches every one of them.  (garcia2026srn) classifies the strictly RN graphs: a 2-connected one is bipartite with parts differing by one, so its smaller part is a cut with c = |S| + 1, and no candidate can score above 2 on a graph that is RN.
- * The same classification would let the RN program be skipped in place of the RP one, since a 1-tough RN graph is RP, but that is not done here: the RN program only ever runs when the RP optimum is exactly 0, which happens on 47 of the 261080 connected graphs on 9 vertices, so there is nothing to save.
+ * The same classification would let the RN program be skipped in place of the RP one, since a 1-tough RN graph is RP, but that is not done here: the RN program is a second program only where the RP optimum came out exactly 0, on 953 of the 194066 two-connected graphs on 9 vertices, and on the cut-tight route it is the only program run at all, so there is next to nothing to save.
  * There P(G) carries the one equality x(E) = n - 1 and no implicit one, so there the relative interior really is the strict system.
  * That leaves one program with integer data, and integer data is what makes exact rational arithmetic practical:
  *
@@ -2267,24 +2269,24 @@ static void run_one(FILE *f, Graph *g, const Opts *o)
 		cert_init(&rpC, m + 1);
 		rp = rn = rp_v = 0;
 	} else {
-	program_solve(&rpP, g, 1, o->exact);
-	if (o->exact && rpP.st == 0)
-		certify(&rpC, g, &rpP);
-	else
-		cert_init(&rpC, rpP.R.ncol);
-	rp_v = verdict(&rpP, &rpC, o->exact);
-	if (rp_v < 0)
-		rp_v = (rpP.st == 0 && rpP.opt > OPT_TOL);
-	if (o->exact && !cert_settled(&rpP, &rpC))
-		cert_ok = 0;
-	rp = rn = rp_v;
-	if (rp) { W = &rpP; WC = &rpC; }
-	if (!rp) {
-		if (o->exact && rpC.dual && mpq_sgn(rpC.ub) < 0)
-			theta_empty = 1;
-		else if (rpP.st == 0 && rpP.opt < -OPT_TOL)
-			theta_empty = 1;
-	}
+		program_solve(&rpP, g, 1, o->exact);
+		if (o->exact && rpP.st == 0)
+			certify(&rpC, g, &rpP);
+		else
+			cert_init(&rpC, rpP.R.ncol);
+		rp_v = verdict(&rpP, &rpC, o->exact);
+		if (rp_v < 0)
+			rp_v = (rpP.st == 0 && rpP.opt > OPT_TOL);
+		if (o->exact && !cert_settled(&rpP, &rpC))
+			cert_ok = 0;
+		rp = rn = rp_v;
+		if (rp) { W = &rpP; WC = &rpC; }
+		if (!rp) {
+			if (o->exact && rpC.dual && mpq_sgn(rpC.ub) < 0)
+				theta_empty = 1;
+			else if (rpP.st == 0 && rpP.opt < -OPT_TOL)
+				theta_empty = 1;
+		}
 	}
 
 	if (!rp && !theta_empty) {
