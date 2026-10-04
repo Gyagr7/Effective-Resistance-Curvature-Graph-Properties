@@ -207,3 +207,10 @@ If you use this code, please cite the paper:
   doi           = {10.48550/arXiv.2607.13169}
 }
 ```
+
+## License
+
+Copyright (C) 2026 Gyaneshwar Agrahari and Hailey Jay Garcia.
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+See [`LICENSE`](LICENSE) for the full text.

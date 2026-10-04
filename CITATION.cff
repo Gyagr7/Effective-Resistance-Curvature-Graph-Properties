@@ -8,19 +8,12 @@ abstract: >-
   spanning tree polytope.
 type: software
 repository-code: "https://github.com/Gyagr7/Effective-Resistance-Curvature-Graph-Properties"
+license: GPL-3.0-or-later
 authors:
   - family-names: Agrahari
     given-names: Gyaneshwar
-  - family-names: Bibby
-    given-names: Christin
-  - family-names: Boros
-    given-names: Sean
   - family-names: Garcia
     given-names: "Hailey Jay"
-  - family-names: Heidercheidt
-    given-names: Fernando
-  - family-names: Wang
-    given-names: Zhiyu
 preferred-citation:
   type: article
   title: "On some structural properties of graphs with non-negative resistance curvature"
