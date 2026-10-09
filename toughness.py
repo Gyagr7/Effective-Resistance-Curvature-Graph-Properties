@@ -91,29 +91,57 @@ def is_one_tough(G: nx.Graph, verbose: bool = False):
     return True, None
 
 
-if __name__ == "__main__":
-    # Sanity check: K_4 is complete, hence trivially 1-tough (no
-    # disconnecting set exists at all).
-    K4 = nx.complete_graph(4)
-    result, witness = is_one_tough(K4, verbose=True)
-    print(f"K4: 1-tough={result}  (expected True)\n")
-
-    # Sanity check: the star graph K_{1,3} is not 1-tough -- removing
-    # the center disconnects it into 3 components with |S| = 1.
-    star = nx.star_graph(3)  # center 0, leaves 1,2,3
-    result, witness = is_one_tough(star, verbose=True)
-    print(f"Star K_1,3: 1-tough={result}  (expected False)\n")
-
-    # Sanity check against Lemma 15 in the paper: G_5(1,1,1,1,1), the
-    # graph obtained from K_6 by subdividing each spoke v0-vi once,
-    # should be 1-tough.
-    G = nx.complete_graph(6)  # vertices 0..5, v0 = 0, spokes to 1..5
+def _g5() -> nx.Graph:
+    """G_5(1,1,1,1,1): K_6 with each spoke v0-vi subdivided once."""
+    G = nx.complete_graph(6)
     G = nx.relabel_nodes(G, {i: f"v{i}" for i in range(6)})
     G.remove_edges_from([("v0", f"v{i}") for i in range(1, 6)])
     for i in range(1, 6):
-        G.add_node(f"x{i}")
         G.add_edge("v0", f"x{i}")
         G.add_edge(f"x{i}", f"v{i}")
-    tau, S = toughness(G, verbose=False)
-    result, witness = is_one_tough(G)
-    print(f"G_5(1,1,1,1,1): tau={tau:.4f}, 1-tough={result}  (expected True, tau>=1)")
+    return G
+
+
+# Each check is a graph, its toughness, and whether it is 1-tough.
+# K_4 is complete, so no set disconnects it and its toughness is
+# infinite by convention. Removing the centre of K_{1,3} leaves three
+# components, so its toughness is 1/3.
+CHECKS = (
+    ("K_4", nx.complete_graph(4), float("inf"), True),
+    ("K_{1,3}", nx.star_graph(3), 1 / 3, False),
+    ("C_5", nx.cycle_graph(5), 1.0, True),
+    ("K_{2,3}", nx.complete_bipartite_graph(2, 3), 2 / 3, False),
+    ("G_5(1,1,1,1,1)", _g5(), 1.0, True),
+)
+
+
+def main() -> int:
+    """Run the checks, and return 1 if any graph disagrees with its row."""
+    problems = []
+    print(f"{'graph':<16} {'tau':>8}  1-tough")
+    for name, G, want_tau, want_tough in CHECKS:
+        tau, _ = toughness(G)
+        tough, _ = is_one_tough(G)
+        print(f"{name:<16} {tau:>8.4f}  {'y' if tough else 'n'}")
+        if tau != want_tau and abs(tau - want_tau) > 1e-9:
+            problems.append(f"{name}: tau is {tau}, expected {want_tau}")
+        if tough is not want_tough:
+            problems.append(f"{name}: 1-tough is {_flag(tough)}, "
+                            f"expected {_flag(want_tough)}")
+
+    print()
+    if problems:
+        print(f"{len(problems)} disagreement(s):")
+        for line in problems:
+            print(f"  {line}")
+        return 1
+    print(f"all {len(CHECKS)} graphs agree with their known toughness")
+    return 0
+
+
+def _flag(value: bool) -> str:
+    return "y" if value else "n"
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

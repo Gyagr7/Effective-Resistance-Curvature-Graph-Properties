@@ -297,33 +297,55 @@ def resistance_positive_decision(
     return rp, rn, t_star, x_dict
 
 
-if __name__ == "__main__":
-
+def _clique_with_legs() -> nx.Graph:
+    """
+    K_4 on 0..3, with a leg of length three from each of its vertices to a
+    common vertex 12. The optimum comes out exactly 0, so it is RN only if
+    the certification is exact.
+    """
     G = nx.Graph()
-    G.add_edges_from([
-        # K4 hub clique
-        (0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3),
+    G.add_edges_from([(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)])
+    for hub, (a, b) in zip(range(4), ((4, 5), (6, 7), (8, 9), (10, 11))):
+        G.add_edges_from([(hub, a), (a, b), (b, 12)])
+    return G
 
-        # Leg from hub 0: 0 -- 4 -- 5 -- 12
-        (0, 4), (4, 5), (5, 12),
 
-        # Leg from hub 1: 1 -- 6 -- 7 -- 12
-        (1, 6), (6, 7), (7, 12),
+# Each check is a graph and the class the certifier should return. The
+# optimum is reported alongside, and is None where a structural shortcut
+# answered the graph with no program run.
+CHECKS = (
+    ("K_3", nx.complete_graph(3), "RP"),
+    ("P_3", nx.path_graph(3), "SRN"),
+    ("K_{1,3}", nx.star_graph(3), "not RN"),
+    ("K_{2,3}", nx.complete_bipartite_graph(2, 3), "SRN"),
+    ("Petersen", nx.petersen_graph(), "RP"),
+    ("K_4 with legs", _clique_with_legs(), "not RN"),
+)
 
-        # Leg from hub 2: 2 -- 8 -- 9 -- 12
-        (2, 8), (8, 9), (9, 12),
 
-        # Leg from hub 3: 3 -- 10 -- 11 -- 12
-        (3, 10), (10, 11), (11, 12),
-    ])
+def main() -> int:
+    """Run the checks, and return 1 if any graph disagrees with its row."""
+    problems = []
+    print(f"{'graph':<14} {'n':>3} {'class':<7} {'optimum':<8} route")
+    for name, G, want in CHECKS:
+        report = rn_report(G)
+        got = report["class"]
+        optimum = report.get("exact", {}).get("optimum")
+        route = report.get("shortcut") or "program"
+        print(f"{name:<14} {report['n']:>3} {got:<7} "
+              f"{str(optimum if optimum is not None else '-'):<8} {route}")
+        if got != want:
+            problems.append(f"{name}: class is {got!r}, expected {want!r}")
 
-    print("n =", G.number_of_nodes())
-    print("m =", G.number_of_edges())
-    print(list(G.edges()))
+    print()
+    if problems:
+        print(f"{len(problems)} disagreement(s):")
+        for line in problems:
+            print(f"  {line}")
+        return 1
+    print(f"all {len(CHECKS)} graphs agree with their known class")
+    return 0
 
-    rp, rn, t_star, x = resistance_positive_decision(G, verbose=True)
 
-    print("\nRESULT")
-    print("t* =", t_star)
-    print("RN?", rn)
-    print("RP?", rp)
+if __name__ == "__main__":
+    raise SystemExit(main())

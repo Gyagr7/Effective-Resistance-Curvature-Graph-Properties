@@ -178,7 +178,8 @@ The output names that gap rather than passing over it.
 
 `examples.py` also keeps the Petersen graph and the grid graphs $P_m \times P_n$, which no longer hold a cell, and checks that each is sprawling.
 
-Each module can also be run directly (`python resistance.py`, etc.) to execute a few built-in sanity checks against known examples.
+Each module can also be run directly (`python resistance.py`, etc.) to check a handful of known examples against their known answers.
+Like `examples.py`, each prints one row per graph and exits nonzero on any disagreement.
 
 ## Scope and caveats
 

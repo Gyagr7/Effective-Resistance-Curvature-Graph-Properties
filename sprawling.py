@@ -260,19 +260,62 @@ def is_sprawling(G: Dict, verbose: bool = False):
     return True, S
 
 
-if __name__ == "__main__":
-    # Sanity check: the 3-cycle is sprawling (Figure 5a in the paper).
-    triangle = {0: {1, 2}, 1: {0, 2}, 2: {0, 1}}
-    result, info = is_sprawling(triangle, verbose=True)
-    print(f"Triangle: sprawling={result}  (expected True), |S|={len(info) if result else '-'}")
-    if result:
-        ok, reason = verify_sprawling_set(triangle, info)
-        print(f"  re-verified witness S directly: ok={ok}")
+def _complete_bipartite(a: int, b: int) -> Dict:
+    left = [f"a{i}" for i in range(a)]
+    right = [f"b{j}" for j in range(b)]
+    return ({v: set(right) for v in left} | {v: set(left) for v in right})
 
-    # Sanity check: a bowtie of two triangles sharing a bridge edge is
-    # not sprawling -- the bridge edge is in every Hamiltonian path, so
-    # some U (the two vertices spanning either triangle side) can never
-    # be broken.
-    bowtie = {0: {1, 2}, 1: {0, 2}, 2: {0, 1, 3}, 3: {2, 4, 5}, 4: {3, 5}, 5: {3, 4}}
-    result, info = is_sprawling(bowtie, verbose=True)
-    print(f"Bowtie of two triangles: sprawling={result}  (expected False), reason={info}")
+
+def _cycle(n: int) -> Dict:
+    return {i: {(i - 1) % n, (i + 1) % n} for i in range(n)}
+
+
+def _path(n: int) -> Dict:
+    return {i: {j for j in (i - 1, i + 1) if 0 <= j < n} for i in range(n)}
+
+
+# Each check is a graph and whether it is sprawling. The bowtie fails
+# because its bridge edge lies in every Hamiltonian path, so the two
+# vertices on either side of it are never broken apart. P_4 fails for
+# want of a second Hamiltonian path.
+CHECKS = (
+    ("K_3", {0: {1, 2}, 1: {0, 2}, 2: {0, 1}}, True),
+    ("K_4", {0: {1, 2, 3}, 1: {0, 2, 3}, 2: {0, 1, 3}, 3: {0, 1, 2}}, True),
+    ("C_5", _cycle(5), True),
+    ("K_{2,3}", _complete_bipartite(2, 3), True),
+    ("P_4", _path(4), False),
+    ("bowtie", {0: {1, 2}, 1: {0, 2}, 2: {0, 1, 3},
+                3: {2, 4, 5}, 4: {3, 5}, 5: {3, 4}}, False),
+)
+
+
+def main() -> int:
+    """Run the checks, and return 1 if any graph disagrees with its row."""
+    problems = []
+    print(f"{'graph':<10} sprawling  |S|  witness")
+    for name, G, want in CHECKS:
+        sprawl, info = is_sprawling(G)
+        size = len(info) if sprawl else 0
+        # Re-verify the returned witness here too, so the check does not
+        # rest on is_sprawling having done it.
+        ok = verify_sprawling_set(G, info)[0] if sprawl else True
+        print(f"{name:<10} {'y' if sprawl else 'n':<9}  {size or '-':<3}  "
+              f"{'re-verified' if sprawl else info}")
+        if sprawl is not want:
+            problems.append(f"{name}: sprawling is {'y' if sprawl else 'n'}, "
+                            f"expected {'y' if want else 'n'}")
+        elif not ok:
+            problems.append(f"{name}: the returned witness does not verify")
+
+    print()
+    if problems:
+        print(f"{len(problems)} disagreement(s):")
+        for line in problems:
+            print(f"  {line}")
+        return 1
+    print(f"all {len(CHECKS)} graphs agree, and every witness re-verifies")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
