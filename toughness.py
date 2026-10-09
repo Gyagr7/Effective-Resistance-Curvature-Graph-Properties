@@ -13,10 +13,9 @@ Equivalently, the toughness of G is
 over all S subseteq V(G) such that G - S is disconnected, and G is
 1-tough iff tau(G) >= 1, i.e. c(G - S) <= |S| for every disconnecting S.
 
-This is brute-force (checks all vertex subsets), so it is only intended
-for small graphs, matching the examples used in the paper (e.g. the
-Dawes-Rodrigues-style construction G_5(s_1, ..., s_5) used in the proof
-of Theorem 4).
+This enumerates every vertex subset, so it is only usable on small
+graphs, roughly n <= 12. That covers the G_t(s_1, ..., s_t) family of
+the appendix, which `examples.py` builds.
 """
 
 from __future__ import annotations

@@ -2,7 +2,8 @@
 sprawling.py
 ============
 
-Check whether a graph G is "sprawling" in the sense of the paper.
+Decide whether a graph is sprawling, which is a sufficient condition for RN (agraharietal2026).
+Citation keys are those of `references.bib`.
 
 Definition. G = (V, E) is sprawling if there is a collection
 S = {H_1, ..., H_q} of Hamiltonian paths of G such that:
@@ -12,29 +13,19 @@ S = {H_1, ..., H_q} of Hamiltonian paths of G such that:
         there exists H_i in S such that H_i[U] is NOT a spanning tree
         of G[U].
 
-`verify_sprawling_set(G, S)` checks these two conditions literally
-against a concrete, explicit S -- it does not reason about "all
-Hamiltonian paths" or rely on any equivalence. `is_sprawling(G)` then
-constructs an explicit witness S (a genuine list of Hamiltonian paths)
-and calls verify_sprawling_set on it before returning True, so the
-result always comes with a checkable certificate rather than an
-implicit argument.
+`verify_sprawling_set(G, S)` checks those two conditions literally against a concrete, explicit S.
+It takes S exactly as given, reasons about no other Hamiltonian path, and rests on no equivalence.
+`is_sprawling(G)` constructs an explicit witness S, a genuine list of Hamiltonian paths, and calls `verify_sprawling_set` on it before returning True.
+So a sprawling verdict always comes with a checkable certificate.
 
-Internally, is_sprawling first checks the FULL pool of all Hamiltonian
-paths, since conditions (1) and (2) are both monotone under adding
-paths to S (more paths can only cover more edges / break more U's).
-So if the full pool already fails, no smaller S can succeed either --
-this only reduces work, and every claimed witness S is independently
-re-verified via verify_sprawling_set before being returned.
+`is_sprawling` starts from the full pool of every Hamiltonian path of G.
+Both conditions are monotone under adding paths to S, since more paths can only cover more edges and break more U, so a pool that already fails settles the graph and no smaller S can succeed.
+That only reduces the work, and every witness returned is re-verified first.
 
-Every sprawling graph is RN (Theorem 8). This module brute-forces over
-all Hamiltonian paths of G and all relevant connected vertex subsets U,
-so it is only intended for small graphs (roughly n <= 11-12 depending on
-density) -- exactly the regime used for the examples in the paper.
+This module enumerates all Hamiltonian paths of G and all relevant connected vertex subsets U, so it is only usable on small graphs, roughly n <= 12 depending on the density.
 
-Graph representation: a plain dict {vertex: set(neighbors)}, matching
-the format used in the exploratory notebooks. Use `from_networkx` to
-convert from a networkx.Graph.
+Graph representation: a plain dict {vertex: set(neighbours)}.
+Use `from_networkx` to convert from a networkx.Graph.
 """
 
 from __future__ import annotations
@@ -132,9 +123,9 @@ def verify_sprawling_set(G: Dict, S: List[List]):
     """
     Directly check conditions (1) and (2) of the sprawling definition,
     verbatim, against a concrete, explicit collection S of Hamiltonian
-    paths of G. This function does NOT reason about "all Hamiltonian
-    paths" or any equivalence -- it takes S exactly as given and checks
-    exactly what the two bullet points say.
+    paths of G. This function takes S exactly as given, reasons about no
+    other Hamiltonian path, rests on no equivalence, and checks exactly
+    what the two conditions say.
 
     Returns (ok, reason):
       * ok = True, reason = None                     if S satisfies both conditions
@@ -159,9 +150,9 @@ def verify_sprawling_set(G: Dict, S: List[List]):
     # G[U] connected, there exists H_i in S with H_i[U] not a spanning
     # tree of G[U]. H_i[U] is always a linear forest (a subgraph of a
     # path), so it is a spanning tree of G[U] iff (a) it has exactly
-    # |U|-1 edges AND (b) it is connected -- equivalently, iff U occupies
-    # a contiguous block of positions in H_i. We check this directly,
-    # per U and per H_i, without assuming the equivalence in advance.
+    # |U|-1 edges and (b) it is connected, equivalently iff U occupies a
+    # contiguous block of positions in H_i. Both halves are checked, per
+    # U and per H_i, rather than assuming the equivalence in advance.
     positions = [{v: i for i, v in enumerate(H)} for H in S]
     Us = _relevant_connected_subsets(G)
 
@@ -187,16 +178,17 @@ def is_sprawling(G: Dict, verbose: bool = False):
     """
     Decide whether G is sprawling, and if so, exhibit an explicit
     witness collection S of Hamiltonian paths satisfying conditions (1)
-    and (2) verbatim (checked via verify_sprawling_set, not inferred).
+    and (2) verbatim, checked by verify_sprawling_set rather than
+    inferred.
 
-    Strategy: the candidate pool is all Hamiltonian paths of G. Both
-    conditions are monotone under adding paths to S (more paths can only
-    cover more edges / break more U's, never fewer), so:
-      * if the FULL pool already fails either condition, no subset can
-        succeed, and G is not sprawling;
-      * otherwise, we greedily select a small explicit subset S from the
-        pool that still satisfies both conditions, and verify S directly
-        and literally with verify_sprawling_set before returning it.
+    Strategy: the candidate pool is every Hamiltonian path of G. Both
+    conditions are monotone under adding paths to S, since more paths
+    can only cover more edges and break more U, never fewer, so:
+      * a full pool that already fails either condition settles G as not
+        sprawling, since no subcollection can succeed;
+      * otherwise a small explicit subset S is selected greedily from the
+        pool, and verified directly and literally by
+        verify_sprawling_set before it is returned.
 
     Returns (result, info) where:
       * result is True/False
@@ -211,8 +203,8 @@ def is_sprawling(G: Dict, verbose: bool = False):
     if not H_paths:
         return False, "no Hamiltonian path exists"
 
-    # Feasibility check against the full pool -- if even every
-    # Hamiltonian path together can't satisfy (1) and (2), nothing can.
+    # Feasibility against the full pool. If every Hamiltonian path
+    # together cannot satisfy (1) and (2), no subcollection can.
     full_ok, full_reason = verify_sprawling_set(G, H_paths)
     if not full_ok:
         return False, full_reason
