@@ -187,6 +187,8 @@ Like `examples.py`, each prints one row per graph and exits nonzero on any disag
   It works comfortably on graphs with dozens of vertices.
 - `sprawling.py` and `toughness.py` are brute force, since they enumerate Hamiltonian paths and vertex subsets respectively, so they are only practical for small graphs, roughly $n \le 12$.
   The three big witnesses fall outside it, and are handled as above.
+- Every sprawling verdict comes with a witness, but the witness is only shortened on a graph whose pool of Hamiltonian paths is small enough, as `GREEDY_PAIR_LIMIT` sets it.
+  Over that limit the whole verified pool comes back instead, which is why $K_{5,5}$ answers in 0.09s with a witness of 14400 paths rather than in 7s with one of 4.
 - `examples.py` builds the whole $G_t(s_1,\dots,s_t)$ family from one constructor, `toughness_family`, which takes the per-branch lengths and labels the vertices `v0..vt` and `xi_k`.
   The advisor's `build_minimal_tough_graph` is gone.
   It built the same graph, a hub joined to a clique by subdivided spokes, with equal branch lengths and integer labels; call `toughness_family([l] * n)` for it.

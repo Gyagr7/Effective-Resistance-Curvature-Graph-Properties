@@ -33,6 +33,14 @@ from __future__ import annotations
 import itertools
 from typing import Dict, FrozenSet, List, Set
 
+# How many (Hamiltonian path, vertex set) pairs `is_sprawling` will scan
+# to shorten the witness it returns. The scan runs at roughly two
+# million pairs a second, and buys nothing but a shorter certificate, so
+# past this limit the verified full pool is returned as the witness
+# instead. Every graph in CHECKS and in `examples.py` stays well under
+# it; K_{5,5}, at 14400 paths against 960 sets, does not.
+GREEDY_PAIR_LIMIT = 2_000_000
+
 
 def from_networkx(G) -> Dict:
     """Convert a networkx.Graph into the adjacency-dict format used here."""
@@ -184,6 +192,11 @@ def is_sprawling(G: Dict, verbose: bool = False):
         pool, and verified directly and literally by
         verify_sprawling_set before it is returned.
 
+    That selection only shortens the certificate, so it is skipped, and
+    the verified full pool returned in its place, on a graph whose pool
+    is large enough to put the scan over GREEDY_PAIR_LIMIT. The verdict
+    is the same either way.
+
     Returns (result, info) where:
       * result is True/False
       * if True,  info is the explicit witness S (list of Hamiltonian paths)
@@ -203,9 +216,19 @@ def is_sprawling(G: Dict, verbose: bool = False):
     if not full_ok:
         return False, full_reason
 
-    # Greedily build a smaller explicit S from H_paths.
+    # Greedily build a smaller explicit S from H_paths. The full pool is
+    # already a verified witness, so this only shortens the certificate,
+    # and its first round costs one contiguity test per (path, U) pair.
+    # Past the limit that work dwarfs the decision itself, so the pool is
+    # handed back whole instead.
     all_edges = {frozenset((u, v)) for u in G for v in G[u]}
     Us = _relevant_connected_subsets(G)
+    if len(H_paths) * len(Us) > GREEDY_PAIR_LIMIT:
+        if verbose:
+            print(f"witness not shortened: {len(H_paths)} paths against "
+                  f"{len(Us)} subsets is over the limit of "
+                  f"{GREEDY_PAIR_LIMIT} pairs")
+        return True, H_paths
     positions_all = [{v: i for i, v in enumerate(H)} for H in H_paths]
 
     def edges_of(H):
