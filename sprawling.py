@@ -172,9 +172,8 @@ def verify_sprawling_set(G: Dict, S: List[List]):
                 1 for i in range(len(H) - 1)
                 if H[i] in U and H[i + 1] in U
             )
-            vals = sorted(pos[v] for v in U)
-            contiguous = (vals[-1] - vals[0] + 1 == len(vals))
-            is_spanning_tree = contiguous and edges_in_U == len(U) - 1
+            is_spanning_tree = (_interval_in_path(pos, U)
+                                and edges_in_U == len(U) - 1)
             if not is_spanning_tree:
                 broken = True
                 break
@@ -227,8 +226,7 @@ def is_sprawling(G: Dict, verbose: bool = False):
         return {frozenset((H[i], H[i + 1])) for i in range(len(H) - 1)}
 
     def breaks(pos, U):
-        vals = sorted(pos[v] for v in U)
-        return vals[-1] - vals[0] + 1 != len(vals)
+        return not _interval_in_path(pos, U)
 
     remaining_edges = set(all_edges)
     remaining_Us = set(Us)

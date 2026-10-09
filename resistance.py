@@ -74,21 +74,6 @@ def _canon_edge(u, v):
     return (u, v) if u <= v else (v, u)
 
 
-def _build_edge_list(G: nx.Graph) -> List[Tuple]:
-    """Return the edges of G, canonicalized and in a fixed order."""
-    return [_canon_edge(u, v) for (u, v) in G.edges()]
-
-
-def _incident_sums(nodes, edges, x_vals) -> Dict:
-    """Return d_v(x) at every vertex v, for x given as a list parallel to `edges`."""
-    inc = {v: 0.0 for v in nodes}
-    for (u, v), xe in zip(edges, x_vals):
-        xe = float(xe)
-        inc[u] += xe
-        inc[v] += xe
-    return inc
-
-
 # ---------------------------------------------------------------------
 # Locating and driving the certifier
 # ---------------------------------------------------------------------
