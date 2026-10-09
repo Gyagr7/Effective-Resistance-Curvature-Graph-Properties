@@ -20,43 +20,53 @@ the appendix, which `examples.py` builds.
 
 from __future__ import annotations
 
+from fractions import Fraction
 from itertools import combinations
+from typing import Iterator, Optional, Set, Tuple, Union
 
 import networkx as nx
 
+# tau(G) is an exact Fraction, except on a graph no vertex set
+# disconnects, where it is infinite by convention.
+Rational = Union[Fraction, float]
 
-def toughness(G: nx.Graph, verbose: bool = False):
+
+def _disconnecting_sets(G: nx.Graph) -> Iterator[Tuple[Set, int]]:
+    """
+    Yield every proper vertex set S whose removal disconnects G, paired
+    with the number of components it leaves.
+
+    G - S is taken as a subgraph view rather than a copy, so the only
+    cost per set is the component count itself.
+    """
+    nodes = list(G.nodes())
+    V = set(nodes)
+    for r in range(1, len(nodes)):
+        for S in combinations(nodes, r):
+            c = nx.number_connected_components(G.subgraph(V.difference(S)))
+            if c > 1:
+                yield set(S), c
+
+
+def toughness(G: nx.Graph, verbose: bool = False) -> Tuple[Rational, Optional[Set]]:
     """
     Compute tau(G) exactly by brute force over all vertex subsets S.
 
-    Returns (tau, witness_S) where witness_S is a minimizing cut set
-    (None if G has no disconnecting set at all, e.g. G is complete --
-    in which case tau(G) is conventionally infinite).
+    Returns (tau, witness_S), with tau an exact Fraction and witness_S a
+    minimizing cut set. A graph with no disconnecting set at all, such as
+    a complete graph, has no witness and the conventional tau of
+    infinity, which comes back as the float rather than as a Fraction.
     """
-    nodes = list(G.nodes())
-    n = len(nodes)
-
-    best_tau = float("inf")
+    best_tau: Rational = float("inf")
     best_S = None
 
-    # S can range over all proper subsets; only sets whose removal
-    # disconnects G are relevant.
-    for r in range(1, n):
-        for S in combinations(nodes, r):
-            S_set = set(S)
-            H = G.copy()
-            H.remove_nodes_from(S_set)
-            if H.number_of_nodes() == 0:
-                continue
-            c = nx.number_connected_components(H)
-            if c <= 1:
-                continue  # S does not disconnect G
-            ratio = len(S_set) / c
-            if ratio < best_tau:
-                best_tau = ratio
-                best_S = S_set
-                if verbose:
-                    print(f"new min: |S|={len(S_set)}, components={c}, ratio={ratio:.4f}, S={S_set}")
+    for S, c in _disconnecting_sets(G):
+        ratio = Fraction(len(S), c)
+        if ratio < best_tau:
+            best_tau, best_S = ratio, S
+            if verbose:
+                print(f"new min: |S|={len(S)}, components={c}, "
+                      f"ratio={ratio}, S={S}")
 
     return best_tau, best_S
 
@@ -69,21 +79,11 @@ def is_one_tough(G: nx.Graph, verbose: bool = False):
     Returns (result, witness) where witness is the first offending cut
     set found if G is not 1-tough, else None.
     """
-    nodes = list(G.nodes())
-    n = len(nodes)
-
-    for r in range(1, n):
-        for S in combinations(nodes, r):
-            S_set = set(S)
-            H = G.copy()
-            H.remove_nodes_from(S_set)
-            if H.number_of_nodes() == 0:
-                continue
-            c = nx.number_connected_components(H)
-            if c > len(S_set):
-                if verbose:
-                    print(f"Not 1-tough: |S|={len(S_set)}, components(G-S)={c}, S={S_set}")
-                return False, S_set
+    for S, c in _disconnecting_sets(G):
+        if c > len(S):
+            if verbose:
+                print(f"Not 1-tough: |S|={len(S)}, components(G-S)={c}, S={S}")
+            return False, S
 
     if verbose:
         print("Graph is 1-tough")
@@ -107,10 +107,10 @@ def _g5() -> nx.Graph:
 # components, so its toughness is 1/3.
 CHECKS = (
     ("K_4", nx.complete_graph(4), float("inf"), True),
-    ("K_{1,3}", nx.star_graph(3), 1 / 3, False),
-    ("C_5", nx.cycle_graph(5), 1.0, True),
-    ("K_{2,3}", nx.complete_bipartite_graph(2, 3), 2 / 3, False),
-    ("G_5(1,1,1,1,1)", _g5(), 1.0, True),
+    ("K_{1,3}", nx.star_graph(3), Fraction(1, 3), False),
+    ("C_5", nx.cycle_graph(5), Fraction(1), True),
+    ("K_{2,3}", nx.complete_bipartite_graph(2, 3), Fraction(2, 3), False),
+    ("G_5(1,1,1,1,1)", _g5(), Fraction(1), True),
 )
 
 
@@ -121,8 +121,8 @@ def main() -> int:
     for name, G, want_tau, want_tough in CHECKS:
         tau, _ = toughness(G)
         tough, _ = is_one_tough(G)
-        print(f"{name:<16} {tau:>8.4f}  {'y' if tough else 'n'}")
-        if tau != want_tau and abs(tau - want_tau) > 1e-9:
+        print(f"{name:<16} {str(tau):>8}  {'y' if tough else 'n'}")
+        if tau != want_tau:
             problems.append(f"{name}: tau is {tau}, expected {want_tau}")
         if tough is not want_tough:
             problems.append(f"{name}: 1-tough is {_flag(tough)}, "

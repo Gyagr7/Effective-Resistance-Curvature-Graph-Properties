@@ -69,6 +69,7 @@ is_sprawl, info = sprawling.is_sprawling(sprawling.from_networkx(G))
 
 # Toughness
 tau, cut_set = toughness.toughness(G)
+# tau is an exact Fraction, or float("inf") when no vertex set disconnects G.
 is_1_tough, witness = toughness.is_one_tough(G)
 
 # The witnesses of the containment diagram, by name
