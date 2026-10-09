@@ -71,7 +71,19 @@ class CertificationError(RuntimeError):
 
 def _canon_edge(u, v):
     """Return the edge {u, v} as an ordered pair, independent of how it was given."""
-    return (u, v) if u <= v else (v, u)
+    try:
+        return (u, v) if u <= v else (v, u)
+    except TypeError:
+        # Labels of different types have no order between them. Fall back
+        # to one that is total, so the key still does not depend on the
+        # orientation the edge arrived in. The type name breaks the tie
+        # between labels that print alike, such as 1 and "1".
+        return (u, v) if _mixed_key(u) <= _mixed_key(v) else (v, u)
+
+
+def _mixed_key(label) -> Tuple[str, str]:
+    """A total order on labels of any types, used only where `<=` will not do."""
+    return (type(label).__name__, str(label))
 
 
 # ---------------------------------------------------------------------
@@ -292,6 +304,16 @@ def _g4() -> nx.Graph:
     return examples.toughness_family([2, 2, 2, 2])
 
 
+def _mixed_labels() -> nx.Graph:
+    """
+    C_5 carrying labels of two types at once, which `_canon_edge` has no
+    `<=` for. The class is the cycle's, so this row only guards the
+    translation of the report back into the caller's labels.
+    """
+    return nx.relabel_nodes(nx.cycle_graph(5),
+                            {0: 0, 1: "a", 2: 1, 3: "b", 4: 2})
+
+
 # Each check builds a graph and names the class the certifier should
 # return. The optimum is reported alongside, and is absent where a
 # structural shortcut answered the graph with no program run.
@@ -302,6 +324,7 @@ CHECKS = (
     ("K_{2,3}", lambda: nx.complete_bipartite_graph(2, 3), "SRN"),
     ("Petersen", nx.petersen_graph, "RP"),
     ("G_4(2,2,2,2)", _g4, "not RN"),
+    ("C_5 mixed", _mixed_labels, "RP"),
 )
 
 
