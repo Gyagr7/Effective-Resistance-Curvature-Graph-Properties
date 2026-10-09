@@ -11,7 +11,7 @@ Citation keys below are those of `references.bib`.
 ## AI disclosure
 
 Claude Opus 5 (Anthropic) wrote `certify/rn.c` and `certify/sweep.py` in their entirety, including the formulation of the linear program, the structural shortcuts and their lemmas, the separation routine, the exact rational certification, the I/O, and the comments.
-It also drafted parts of the prose and the docstrings elsewhere in this repository, and the current form of `resistance.py`.
+It also drafted parts of the prose and the docstrings elsewhere in this repository, and the current form of `resistance.py` and `examples.py`.
 Hailey Jay Garcia directed and supervised that work, reviewed the result, and is responsible for the mathematics it rests on and for the answers it reports.
 The mathematical content of the paper is the authors' own.
 
@@ -22,10 +22,9 @@ The mathematical content of the paper is the authors' own.
 | `certify/rn.c` | The certifier: decide RN, RP, or SRN by linear programming over the spanning tree polytope, with optional exact rational certification of the answer. Written in C against GLPK and GMP. |
 | `certify/sweep.py` | Differential test for the certifier: run two builds of `certify/rn` over every connected graph of a given order, from nauty's `geng`, and compare their verdicts. |
 | `resistance.py` | Python wrapper around `certify/rn`. Serialize a graph, run the certifier, and read the verdict and witness back under the graph's own labels. |
-| `sprawling.py` | Decide whether a graph is *sprawling* (Section 5), a sufficient condition for RN (Theorem 8). Every "sprawling" verdict comes with an explicit, independently re-verified witness collection. |
+| `sprawling.py` | Decide whether a graph is *sprawling*, a sufficient condition for RN. Every "sprawling" verdict comes with an explicit, independently re-verified witness collection. |
 | `toughness.py` | Compute exact (vertex) toughness and check 1-toughness, by brute force. |
-| `examples.py` | Graph constructions referenced in the paper (Petersen graph, grid graphs, the $G_t(s_1,\dots,s_t)$ family from Theorem 4, etc.). |
-| `verify_figure2_examples.py` | Run all three checkers against every example graph in Figure 1 (the paper's main examples figure), labeled by panel letter. |
+| `examples.py` | The witnesses of the containment diagram in the appendix, one per cell. Run it to rebuild all fourteen and check each against the properties its cell asserts. |
 | `references.bib` | The bibliography cited by key from the source files. |
 
 ## Installation
@@ -39,7 +38,7 @@ The build needs GLPK and GMP, packaged as `glpk` and `gmp` on Arch and as `libgl
 `resistance.py` runs that build itself on first use, if the binary is missing and a compiler is available.
 Set the environment variable `RN_BIN` to use a binary from elsewhere.
 
-`make -C certify check` runs the certifier over `certify/examples.json`.
+`make -C certify check` runs the certifier over `certify/examples.json`, which holds the same fourteen graphs as `examples.py`.
 `certify/sweep.py` needs nauty's `geng` on PATH as well (`nauty` on Arch, `nauty` on Debian, where the binary is named `nauty-geng`), and takes a second build of `rn` to compare against:
 
 ```bash
@@ -54,7 +53,7 @@ import resistance, sprawling, toughness
 
 G = nx.petersen_graph()
 
-# RN / RP decision (Theorem 1)
+# RN / RP decision
 rp, rn, t_star, x = resistance.resistance_positive_decision(G, verbose=False)
 # x is the witness point in the spanning tree polytope, keyed by edge.
 # t_star is max_v d_v(x) at that witness, and is None when G is not RN.
@@ -63,14 +62,19 @@ rp, rn, t_star, x = resistance.resistance_positive_decision(G, verbose=False)
 # The certifier's full report, including the exact certificate
 report = resistance.rn_report(G)
 
-# Sprawling decision (Section 5), which takes an adjacency-dict graph
+# Sprawling decision, which takes an adjacency-dict graph
 is_sprawl, info = sprawling.is_sprawling(sprawling.from_networkx(G))
 # info is the explicit witness collection S if is_sprawl=True,
 # or the specific failing condition/set if False
 
-# Toughness (used in the proof of Theorem 4)
+# Toughness
 tau, cut_set = toughness.toughness(G)
 is_1_tough, witness = toughness.is_one_tough(G)
+
+# The witnesses of the containment diagram, by name
+import examples
+G = examples.x37()                      # X(Gamma, 3, 4): strictly RN, not traceable
+G = examples.toughness_family([1, 2, 1])  # G_3(1,2,1): RP, traceable, not sprawling
 ```
 
 ### How `resistance.py` decides RN / RP
@@ -125,31 +129,72 @@ Those two solutions bound the optimum from each side, which certifies its sign.
 `resistance.py` raises `CertificationError` when no certificate is obtained, rather than returning an unchecked verdict.
 There are no solver tolerances to set.
 
-Each module can also be run directly (`python resistance.py`, etc.) to execute a few built-in sanity checks against known examples from the paper.
-`python examples.py` reproduces the key computational claims end-to-end, including:
+### The containment diagram
 
-- the Petersen graph is RP;
-- grid graphs $P_m \times P_n$ are sprawling (Theorem 17);
-- the $G_5(1,1,1,1,1)$ construction from Theorem 4 is 1-tough but not RN, disproving Fiedler's conjecture that every 1-tough graph is RP.
+The appendix draws a containment diagram of seven properties: 2-connected, traceable, 1-tough, RN, RP, sprawling, and Hamiltonian.
+It has fourteen nonempty cells and draws a witness in each, at the smallest order known.
+`examples.py` builds all fourteen.
+Running it recomputes each witness's class and, where that is in reach, the rest of its property vector, then compares both against what the cell asserts.
+It takes under a second and exits nonzero on any disagreement.
+
+| Cell | Witness | $n$ | Class | Optimum |
+|---|---|---|---|---|
+| outside everything | $K_{1,3}$ | 4 | not RN | shortcut |
+| 2-connected, nothing else | $K_{2,4}$ | 6 | not RN | shortcut |
+| 1-tough, not RN, not traceable | $G_5(1,1,1,1,1)$ | 11 | not RN | $-1/12$ |
+| 1-tough, traceable, not RN | $G_4(1,1,1,1)$ | 9 | not RN | $0$ |
+| RP, not traceable | $T_{34}$ | 34 | RP | $1/34$ |
+| RP, traceable, not sprawling | $G_3(1,2,1)$ | 8 | RP | $1/11$ |
+| RP, sprawling, not Hamiltonian | $G_3(1,1,1)$ | 7 | RP | $2/19$ |
+| Hamiltonian | $K_3$ | 3 | RP | $1/3$ |
+| RN, not 2-connected | $P_3$ | 3 | SRN | $1$ |
+| RN, sprawling, not 1-tough | $K_{2,3}$ | 5 | SRN | $1/9$ |
+| strictly RN, not traceable | $X_{37}$ | 37 | SRN | $1/63$ |
+| strictly RN, traceable, not sprawling | $X_{29}$ | 29 | SRN | $1/36$ |
+| traceable, not 1-tough, not RN | $K_{2,3}+e$ | 5 | not RN | $0$ |
+| traceable, not 2-connected, not RN | $K_{1,3}+e$ | 4 | not RN | shortcut |
+
+The optimum is the slack $t$ of the program above.
+It is positive exactly when the graph is RN, and positive with the degree rows tightened exactly when the graph is RP.
+The rows marked `shortcut` are answered structurally, with no program run and so no optimum to report, and `rn` gives the route in its `shortcut` field.
+`certify/examples.json` holds the same graphs, so `make -C certify check` certifies the whole column directly.
+
+The two $X_n$ come from `fragment_product` and `fragment_product_swapped`, the general construction $X(\Gamma,n,m)$ of the appendix.
+Take $n$ copies of a bipartite fragment $\Gamma$, and join every vertex of every copy of the larger part to each of $m$ further vertices.
+For $X'$, swap one copy for $K_{1,2}$.
+Both witnesses take $\Gamma$ to be the $11$-vertex fragment, with $n = 3$ and $m = 4$.
+`examples.py` checks each constructed graph against the graph6 string it was certified under, so a constructor cannot drift unnoticed.
+
+The three big witnesses are past the reach of the brute force in `sprawling.py` and `toughness.py`, so a cheap witness settles each of their remaining properties instead.
+The output names the route taken for every one:
+
+- the fragment $\Gamma$ is not traceable, which `examples.py` checks by enumeration, and the two fragment lemmas carry that to $X_{37}$ not traceable and $X_{29}$ not sprawling;
+- neither $X_{37}$ nor $X_{29}$ is 1-tough, by the vertex cut `examples.py` exhibits and checks: both are bipartite with parts differing by one, so removing the smaller part leaves one component per vertex of the larger;
+- an explicit Hamiltonian path, the five-piece decomposition the appendix describes, makes $X_{29}$ traceable, and `examples.py` checks it;
+- RP implies 1-tough [[Theorem 3.4.18, Fie11]](#fiedler2011), which settles $T_{34}$.
+
+The non-traceability of $T_{34}$ rests on a hypotraceability search, and `examples.py` does not run it.
+The output names that gap rather than passing over it.
+
+`examples.py` also keeps the Petersen graph and the grid graphs $P_m \times P_n$, which no longer hold a cell, and checks that each is sprawling.
+
+Each module can also be run directly (`python resistance.py`, etc.) to execute a few built-in sanity checks against known examples.
 
 ## Scope and caveats
 
 - `resistance.py` is exact by default: the sign of the optimum is certified in rational arithmetic, so a returned verdict does not depend on solver precision.
   It works comfortably on graphs with dozens of vertices.
-- `sprawling.py` and `toughness.py` are brute force, since they enumerate Hamiltonian paths and vertex subsets respectively, so they are only practical for small graphs.
-  That is the regime used for the examples in the paper, roughly $n \le 12$.
-- Both `toughness_family` and `build_minimal_tough_graph` in `examples.py` build the same underlying construction from Theorem 4 / Lemma 15, a hub connected to a clique via subdivided spokes.
-  The former takes per-branch lengths and uses string labels, the latter takes equal branch lengths and uses integer labels.
-  Both are kept as entry points, since both conventions have been used across the project.
-- The verification that the Thomassen 34-graph is RP (Theorem 5) uses a hand-constructed rational weighting rather than any code in this repository.
-  See the proof of Theorem 5 in the paper.
-  The current revision of Figure 1 no longer includes a Thomassen 34-graph panel.
+- `sprawling.py` and `toughness.py` are brute force, since they enumerate Hamiltonian paths and vertex subsets respectively, so they are only practical for small graphs, roughly $n \le 12$.
+  The three big witnesses fall outside it, and are handled as above.
+- `examples.py` builds the whole $G_t(s_1,\dots,s_t)$ family from one constructor, `toughness_family`, which takes the per-branch lengths and labels the vertices `v0..vt` and `xi_k`.
+  The advisor's `build_minimal_tough_graph` is gone.
+  It built the same graph, a hub joined to a clique by subdivided spokes, with equal branch lengths and integer labels; call `toughness_family([l] * n)` for it.
+- The three big witnesses travel as graph6 strings or as constructors.
+  `certify/rn --exact` certifies each of them in rational arithmetic in under 40 ms, so none needs a hand-built weighting.
 
 ## Requirements
 
 `networkx` (see `requirements.txt`), plus GLPK and GMP and a C compiler for `certify/rn`.
-The earlier cvxpy and SCS dependency is gone from `resistance.py`.
-`verify_figure2_examples.py` still names cvxpy in its comments, which describe how its captured output was produced.
 
 ## References
 
