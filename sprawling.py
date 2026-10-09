@@ -91,16 +91,10 @@ def _relevant_connected_subsets(G: Dict) -> List[FrozenSet]:
     """
     All proper, nonempty, connected vertex sets U with 2 <= |U| <= n-1.
 
-    Note: condition (2) of the sprawling definition places NO restriction
-    on the degree sequence of G[U] -- it only requires that G[U] be
-    connected. (An earlier version of this function incorrectly also
-    required max degree <= 2 in G[U], reasoning that only "path-like"
-    induced subgraphs could ever have H_i[U] be a spanning tree. That's
-    wrong: G[U] can have high-degree vertices while some Hamiltonian
-    path H_i still happens to traverse U contiguously, or conversely
-    every H_i might fail to do so even for low-degree U. The degree
-    sequence of G[U] and the interval structure of U within each H_i are
-    logically independent, so every connected U must be checked.)
+    Connectedness is the only restriction condition (2) places on U. In
+    particular it says nothing about the degree sequence of G[U], which
+    is independent of whether a given H_i traverses U contiguously, so
+    no connected U can be ruled out in advance of the check.
     """
     V = set(G.keys())
     n = len(V)
